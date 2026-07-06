@@ -3,13 +3,15 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Yahoo Finance Scraper API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: finance
+    description: Yahoo Finance data
 paths:
   /healthz:
     get:
@@ -24,8 +26,166 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /finance/search:
+    get:
+      operationId: searchSymbols
+      tags: [finance]
+      summary: Search for stocks and symbols
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query (ticker or company name)
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchResult"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /finance/quote/{symbol}:
+    get:
+      operationId: getQuote
+      tags: [finance]
+      summary: Get stock quote
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Stock ticker symbol (e.g. AAPL)
+      responses:
+        "200":
+          description: Stock quote data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockQuote"
+        "404":
+          description: Symbol not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /finance/history/{symbol}/{period}:
+    get:
+      operationId: getPriceHistory
+      tags: [finance]
+      summary: Get historical price data
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: period
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/HistoryPeriod"
+      responses:
+        "200":
+          description: Historical OHLCV price data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PricePoint"
+        "404":
+          description: Symbol not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /finance/news/{symbol}:
+    get:
+      operationId: getNews
+      tags: [finance]
+      summary: Get latest news for a symbol
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: News articles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NewsArticle"
+        "404":
+          description: Symbol not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /finance/summary/{symbol}:
+    get:
+      operationId: getCompanySummary
+      tags: [finance]
+      summary: Get company summary and key statistics
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Company summary and statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanySummary"
+        "404":
+          description: Symbol not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /finance/trending:
+    get:
+      operationId: getTrending
+      tags: [finance]
+      summary: Get trending tickers
+      responses:
+        "200":
+          description: Trending stock symbols with basic quote data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrendingTicker"
+
 components:
   schemas:
+    HistoryPeriod:
+      type: string
+      enum: ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
+
     HealthStatus:
       type: object
       properties:
@@ -34,3 +194,187 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    SearchResult:
+      type: object
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        exchange:
+          type: string
+        type:
+          type: string
+        score:
+          type: ["number", "null"]
+      required:
+        - symbol
+        - name
+        - exchange
+        - type
+
+    StockQuote:
+      type: object
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        price:
+          type: ["number", "null"]
+        open:
+          type: ["number", "null"]
+        high:
+          type: ["number", "null"]
+        low:
+          type: ["number", "null"]
+        previousClose:
+          type: ["number", "null"]
+        change:
+          type: ["number", "null"]
+        changePercent:
+          type: ["number", "null"]
+        volume:
+          type: ["number", "null"]
+        avgVolume:
+          type: ["number", "null"]
+        marketCap:
+          type: ["number", "null"]
+        peRatio:
+          type: ["number", "null"]
+        eps:
+          type: ["number", "null"]
+        fiftyTwoWeekHigh:
+          type: ["number", "null"]
+        fiftyTwoWeekLow:
+          type: ["number", "null"]
+        currency:
+          type: ["string", "null"]
+        exchange:
+          type: ["string", "null"]
+        marketState:
+          type: ["string", "null"]
+      required:
+        - symbol
+        - name
+
+    PricePoint:
+      type: object
+      properties:
+        date:
+          type: string
+        open:
+          type: ["number", "null"]
+        high:
+          type: ["number", "null"]
+        low:
+          type: ["number", "null"]
+        close:
+          type: ["number", "null"]
+        volume:
+          type: ["number", "null"]
+        adjClose:
+          type: ["number", "null"]
+      required:
+        - date
+
+    NewsArticle:
+      type: object
+      properties:
+        title:
+          type: string
+        publisher:
+          type: ["string", "null"]
+        link:
+          type: string
+        publishedAt:
+          type: ["string", "null"]
+        thumbnail:
+          type: ["string", "null"]
+        summary:
+          type: ["string", "null"]
+      required:
+        - title
+        - link
+
+    CompanySummary:
+      type: object
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        sector:
+          type: ["string", "null"]
+        industry:
+          type: ["string", "null"]
+        website:
+          type: ["string", "null"]
+        employees:
+          type: ["number", "null"]
+        country:
+          type: ["string", "null"]
+        city:
+          type: ["string", "null"]
+        marketCap:
+          type: ["number", "null"]
+        enterpriseValue:
+          type: ["number", "null"]
+        trailingPE:
+          type: ["number", "null"]
+        forwardPE:
+          type: ["number", "null"]
+        priceToBook:
+          type: ["number", "null"]
+        profitMargins:
+          type: ["number", "null"]
+        returnOnEquity:
+          type: ["number", "null"]
+        revenueGrowth:
+          type: ["number", "null"]
+        totalRevenue:
+          type: ["number", "null"]
+        grossProfit:
+          type: ["number", "null"]
+        totalDebt:
+          type: ["number", "null"]
+        totalCash:
+          type: ["number", "null"]
+        dividendYield:
+          type: ["number", "null"]
+        beta:
+          type: ["number", "null"]
+      required:
+        - symbol
+        - name
+
+    TrendingTicker:
+      type: object
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        price:
+          type: ["number", "null"]
+        change:
+          type: ["number", "null"]
+        changePercent:
+          type: ["number", "null"]
+        volume:
+          type: ["number", "null"]
+        marketCap:
+          type: ["number", "null"]
+      required:
+        - symbol
+        - name

@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "Yahoo Finance Scraper"
+version = "1.0.0"
+id = "artifacts/yahoo-finance-scraper"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25454
+
+[services.development]
+run = "pnpm --filter @workspace/yahoo-finance-scraper run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/yahoo-finance-scraper", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/yahoo-finance-scraper/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25454"
+BASE_PATH = "/"

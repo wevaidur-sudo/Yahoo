@@ -5,6 +5,25 @@ import { useSearchSymbols, getSearchSymbolsQueryKey } from "@workspace/api-clien
 import { useDebounce } from "@/hooks/use-debounce";
 import { cn } from "@/lib/utils";
 
+const TYPE_LABELS: Record<string, { label: string; color: string }> = {
+  EQUITY:         { label: "STOCK",   color: "text-blue-400 bg-blue-400/10 border-blue-400/20" },
+  CRYPTOCURRENCY: { label: "CRYPTO",  color: "text-amber-400 bg-amber-400/10 border-amber-400/20" },
+  ETF:            { label: "ETF",     color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20" },
+  MUTUALFUND:     { label: "FUND",    color: "text-purple-400 bg-purple-400/10 border-purple-400/20" },
+  FUTURE:         { label: "FUTURE",  color: "text-orange-400 bg-orange-400/10 border-orange-400/20" },
+  INDEX:          { label: "INDEX",   color: "text-rose-400 bg-rose-400/10 border-rose-400/20" },
+  CURRENCY:       { label: "FOREX",   color: "text-cyan-400 bg-cyan-400/10 border-cyan-400/20" },
+};
+
+function TypeBadge({ type }: { type: string }) {
+  const info = TYPE_LABELS[type?.toUpperCase()] ?? { label: type || "OTHER", color: "text-muted-foreground bg-muted border-border" };
+  return (
+    <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded border tracking-wide", info.color)}>
+      {info.label}
+    </span>
+  );
+}
+
 export default function SearchBar() {
   const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
@@ -50,7 +69,7 @@ export default function SearchBar() {
         <input
           type="text"
           className="w-full bg-transparent border-none py-2.5 px-3 text-sm outline-none placeholder:text-muted-foreground/70"
-          placeholder="Search tickers or companies..."
+          placeholder="Search stocks, crypto, ETFs, futures..."
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -88,8 +107,9 @@ export default function SearchBar() {
                       {result.name}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className="bg-background px-2 py-0.5 rounded border border-border">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+                    <TypeBadge type={result.type} />
+                    <span className="hidden sm:inline bg-background px-1.5 py-0.5 rounded border border-border text-[11px]">
                       {result.exchange}
                     </span>
                   </div>

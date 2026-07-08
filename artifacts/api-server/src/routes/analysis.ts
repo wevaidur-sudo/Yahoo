@@ -649,7 +649,7 @@ Return ONLY valid JSON (no markdown):
         multiplier = 1;
       } else if (requiredCapitalPerUnit > investmentAmount) {
         res.status(422).json({
-          error: `The ${aiOutput.strategyName ?? "selected strategy"} requires at least ${requiredCapitalPerUnit.toLocaleString(undefined, { maximumFractionDigits: 2 })} of capital per contract, which exceeds your ${investmentAmount.toLocaleString()} budget. Try a larger amount or ask for a narrower spread.`,
+          error: "The " + (aiOutput.strategyName ?? "selected strategy") + " requires at least $" + requiredCapitalPerUnit.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " of capital per contract, which exceeds your $" + investmentAmount.toLocaleString() + " budget. Try a larger amount or ask for a narrower spread.",
         });
         return;
       } else {

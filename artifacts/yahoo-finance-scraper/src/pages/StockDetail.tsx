@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useParams } from "wouter";
+import AIAnalysisTab from "@/components/AIAnalysisTab";
 import { 
   useGetQuote, getGetQuoteQueryKey,
   useGetPriceHistory, getGetPriceHistoryQueryKey,
@@ -29,6 +30,7 @@ export default function StockDetail() {
   const symbol = params.symbol?.toUpperCase() || "";
   
   const [period, setPeriod] = useState<HistoryPeriod>('1mo');
+  const [activeTab, setActiveTab] = useState<'overview' | 'ai'>('overview');
 
   const { data: quote, isLoading: isQuoteLoading } = useGetQuote(symbol, { 
     query: { enabled: !!symbol, queryKey: getGetQuoteQueryKey(symbol), refetchInterval: 1_000 } 
@@ -74,6 +76,7 @@ export default function StockDetail() {
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-12">
       {/* Header / Quote Section */}
+
       <section className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-2">
         {isQuoteLoading ? (
           <div className="h-32 w-72 bg-card animate-pulse rounded-lg border border-border" />
@@ -118,6 +121,33 @@ export default function StockDetail() {
           </div>
         )}
       </section>
+
+      {/* Tab Bar */}
+      <div className="flex items-center gap-1 bg-card border border-card-border rounded-xl p-1 w-fit">
+        {([
+          { id: 'overview', label: 'Overview' },
+          { id: 'ai', label: '✦ AI Analysis' },
+        ] as const).map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "px-5 py-2 text-sm font-semibold rounded-lg transition-all duration-200",
+              activeTab === tab.id
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted"
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* AI Analysis Tab */}
+      {activeTab === 'ai' && <AIAnalysisTab symbol={symbol} />}
+
+      {/* Overview Tab */}
+      {activeTab === 'overview' && <>
 
       {/* Chart Section */}
       <section className="bg-card border border-card-border rounded-2xl p-5 md:p-7 shadow-sm">
@@ -302,6 +332,8 @@ export default function StockDetail() {
           )}
         </div>
       </div>
+
+      </>}
     </div>
   );
 }

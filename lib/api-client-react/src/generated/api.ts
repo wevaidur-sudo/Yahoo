@@ -6,11 +6,15 @@
  * OpenAPI spec version: 0.1.0
  */
 import {
+  useMutation,
   useQuery
 } from '@tanstack/react-query';
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult
 } from '@tanstack/react-query';
@@ -21,15 +25,18 @@ import type {
   HealthStatus,
   HistoryPeriod,
   NewsArticle,
+  OptionsStrategy,
+  OptionsStrategyRequest,
   PricePoint,
   SearchResult,
   SearchSymbolsParams,
+  StockAnalysis,
   StockQuote,
   TrendingTicker
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
-import type { ErrorType } from '../custom-fetch';
+import type { ErrorType , BodyType } from '../custom-fetch';
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -606,4 +613,152 @@ export function useGetTrending<TData = Awaited<ReturnType<typeof getTrending>>, 
 
 
 
+
+export const getGetStockAnalysisUrl = (symbol: string,) => {
+
+
+
+
+  return `/api/finance/analysis/${symbol}`
+}
+
+/**
+ * @summary Get AI-powered stock analysis and prediction
+ */
+export const getStockAnalysis = async (symbol: string, options?: RequestInit): Promise<StockAnalysis> => {
+
+  return customFetch<StockAnalysis>(getGetStockAnalysisUrl(symbol),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStockAnalysisQueryKey = (symbol: string,) => {
+    return [
+    `/api/finance/analysis/${symbol}`
+    ] as const;
+    }
+
+
+export const getGetStockAnalysisQueryOptions = <TData = Awaited<ReturnType<typeof getStockAnalysis>>, TError = ErrorType<ErrorResponse>>(symbol: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockAnalysis>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStockAnalysisQueryKey(symbol);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStockAnalysis>>> = ({ signal }) => getStockAnalysis(symbol, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: symbol !== null && symbol !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStockAnalysis>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStockAnalysisQueryResult = NonNullable<Awaited<ReturnType<typeof getStockAnalysis>>>
+export type GetStockAnalysisQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Get AI-powered stock analysis and prediction
+ */
+
+export function useGetStockAnalysis<TData = Awaited<ReturnType<typeof getStockAnalysis>>, TError = ErrorType<ErrorResponse>>(
+ symbol: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStockAnalysis>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStockAnalysisQueryOptions(symbol,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetOptionsStrategyUrl = (symbol: string,) => {
+
+
+
+
+  return `/api/finance/options-strategy/${symbol}`
+}
+
+/**
+ * @summary Get AI-powered options strategy based on investment amount
+ */
+export const getOptionsStrategy = async (symbol: string,
+    optionsStrategyRequest: OptionsStrategyRequest, options?: RequestInit): Promise<OptionsStrategy> => {
+
+  return customFetch<OptionsStrategy>(getGetOptionsStrategyUrl(symbol),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(optionsStrategyRequest)
+  }
+);}
+
+
+
+
+export const getGetOptionsStrategyMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof getOptionsStrategy>>, TError,{symbol: string;data: BodyType<OptionsStrategyRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof getOptionsStrategy>>, TError,{symbol: string;data: BodyType<OptionsStrategyRequest>}, TContext> => {
+
+const mutationKey = ['getOptionsStrategy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof getOptionsStrategy>>, {symbol: string;data: BodyType<OptionsStrategyRequest>}> = (props) => {
+          const {symbol,data} = props ?? {};
+
+          return  getOptionsStrategy(symbol,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GetOptionsStrategyMutationResult = NonNullable<Awaited<ReturnType<typeof getOptionsStrategy>>>
+    export type GetOptionsStrategyMutationBody = BodyType<OptionsStrategyRequest>
+    export type GetOptionsStrategyMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Get AI-powered options strategy based on investment amount
+ */
+export const useGetOptionsStrategy = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof getOptionsStrategy>>, TError,{symbol: string;data: BodyType<OptionsStrategyRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof getOptionsStrategy>>,
+        TError,
+        {symbol: string;data: BodyType<OptionsStrategyRequest>},
+        TContext
+      > => {
+      return useMutation(getGetOptionsStrategyMutationOptions(options));
+    }
 

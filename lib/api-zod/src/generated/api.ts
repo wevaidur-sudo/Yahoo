@@ -151,3 +151,106 @@ export const GetTrendingResponseItem = zod.object({
 export const GetTrendingResponse = zod.array(GetTrendingResponseItem)
 
 
+/**
+ * @summary Get AI-powered stock analysis and prediction
+ */
+export const GetStockAnalysisParams = zod.object({
+  "symbol": zod.coerce.string()
+})
+
+export const GetStockAnalysisResponse = zod.object({
+  "symbol": zod.string(),
+  "generatedAt": zod.string(),
+  "trend": zod.object({
+  "direction": zod.enum(['bullish', 'bearish', 'neutral']),
+  "confidence": zod.number(),
+  "summary": zod.string(),
+  "reasoning": zod.string(),
+  "priceTargets": zod.object({
+  "support": zod.number().nullish(),
+  "resistance": zod.number().nullish(),
+  "oneWeek": zod.number().nullish(),
+  "oneMonth": zod.number().nullish()
+}).optional()
+}),
+  "intraday": zod.object({
+  "bias": zod.enum(['bullish', 'bearish', 'neutral']),
+  "setup": zod.string(),
+  "keyLevels": zod.array(zod.object({
+  "price": zod.number(),
+  "type": zod.string(),
+  "significance": zod.string()
+})),
+  "topPick": zod.boolean(),
+  "topPickReason": zod.string().nullish()
+}),
+  "technicalIndicators": zod.object({
+  "rsi": zod.number().nullish(),
+  "macd": zod.number().nullish(),
+  "macdSignal": zod.number().nullish(),
+  "macdHistogram": zod.number().nullish(),
+  "bollingerUpper": zod.number().nullish(),
+  "bollingerMiddle": zod.number().nullish(),
+  "bollingerLower": zod.number().nullish(),
+  "sma20": zod.number().nullish(),
+  "sma50": zod.number().nullish(),
+  "sma200": zod.number().nullish(),
+  "atr": zod.number().nullish(),
+  "volumeRatio": zod.number().nullish()
+}),
+  "optionsSnapshot": zod.object({
+  "sentiment": zod.enum(['bullish', 'bearish', 'neutral']),
+  "putCallRatio": zod.number().nullish(),
+  "unusualActivity": zod.string(),
+  "topCallPick": zod.object({
+  "strike": zod.number(),
+  "expiry": zod.string(),
+  "premium": zod.number().nullish(),
+  "rationale": zod.string()
+}).optional(),
+  "topPutPick": zod.object({
+  "strike": zod.number(),
+  "expiry": zod.string(),
+  "premium": zod.number().nullish(),
+  "rationale": zod.string()
+}).optional()
+}).optional()
+})
+
+
+/**
+ * @summary Get AI-powered options strategy based on investment amount
+ */
+export const GetOptionsStrategyParams = zod.object({
+  "symbol": zod.coerce.string()
+})
+
+export const GetOptionsStrategyBody = zod.object({
+  "investmentAmount": zod.number()
+})
+
+export const GetOptionsStrategyResponse = zod.object({
+  "symbol": zod.string(),
+  "investmentAmount": zod.number(),
+  "strategyName": zod.string(),
+  "strategyType": zod.enum(['bullish', 'bearish', 'neutral', 'volatile']),
+  "legs": zod.array(zod.object({
+  "type": zod.enum(['call', 'put', 'stock']),
+  "action": zod.enum(['buy', 'sell']),
+  "strike": zod.number().nullish(),
+  "expiry": zod.string().nullish(),
+  "premium": zod.number().nullish(),
+  "contracts": zod.number()
+})),
+  "totalCost": zod.number().nullish(),
+  "maxProfit": zod.string(),
+  "maxLoss": zod.string(),
+  "breakeven": zod.string(),
+  "probability": zod.number(),
+  "riskLevel": zod.enum(['low', 'medium', 'high']),
+  "reasoning": zod.string(),
+  "entryTiming": zod.string(),
+  "exitStrategy": zod.string()
+})
+
+

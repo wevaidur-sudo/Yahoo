@@ -180,6 +180,74 @@ paths:
                 items:
                   $ref: "#/components/schemas/TrendingTicker"
 
+  /finance/analysis/{symbol}:
+    get:
+      operationId: getStockAnalysis
+      tags: [finance]
+      summary: Get AI-powered stock analysis and prediction
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: AI analysis with trend prediction, intraday bias, technicals, and options snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockAnalysis"
+        "404":
+          description: Symbol not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Analysis failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /finance/options-strategy/{symbol}:
+    post:
+      operationId: getOptionsStrategy
+      tags: [finance]
+      summary: Get AI-powered options strategy based on investment amount
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OptionsStrategyRequest"
+      responses:
+        "200":
+          description: Optimal options strategy for the given investment amount
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OptionsStrategy"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Strategy generation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HistoryPeriod:
@@ -378,3 +446,235 @@ components:
       required:
         - symbol
         - name
+
+    PriceTargets:
+      type: object
+      properties:
+        support:
+          type: ["number", "null"]
+        resistance:
+          type: ["number", "null"]
+        oneWeek:
+          type: ["number", "null"]
+        oneMonth:
+          type: ["number", "null"]
+
+    TrendPrediction:
+      type: object
+      properties:
+        direction:
+          type: string
+          enum: [bullish, bearish, neutral]
+        confidence:
+          type: number
+        summary:
+          type: string
+        reasoning:
+          type: string
+        priceTargets:
+          $ref: "#/components/schemas/PriceTargets"
+      required:
+        - direction
+        - confidence
+        - summary
+        - reasoning
+
+    KeyLevel:
+      type: object
+      properties:
+        price:
+          type: number
+        type:
+          type: string
+        significance:
+          type: string
+      required:
+        - price
+        - type
+        - significance
+
+    IntradayAnalysis:
+      type: object
+      properties:
+        bias:
+          type: string
+          enum: [bullish, bearish, neutral]
+        setup:
+          type: string
+        keyLevels:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyLevel"
+        topPick:
+          type: boolean
+        topPickReason:
+          type: ["string", "null"]
+      required:
+        - bias
+        - setup
+        - keyLevels
+        - topPick
+
+    TechnicalIndicators:
+      type: object
+      properties:
+        rsi:
+          type: ["number", "null"]
+        macd:
+          type: ["number", "null"]
+        macdSignal:
+          type: ["number", "null"]
+        macdHistogram:
+          type: ["number", "null"]
+        bollingerUpper:
+          type: ["number", "null"]
+        bollingerMiddle:
+          type: ["number", "null"]
+        bollingerLower:
+          type: ["number", "null"]
+        sma20:
+          type: ["number", "null"]
+        sma50:
+          type: ["number", "null"]
+        sma200:
+          type: ["number", "null"]
+        atr:
+          type: ["number", "null"]
+        volumeRatio:
+          type: ["number", "null"]
+
+    OptionPick:
+      type: object
+      properties:
+        strike:
+          type: number
+        expiry:
+          type: string
+        premium:
+          type: ["number", "null"]
+        rationale:
+          type: string
+      required:
+        - strike
+        - expiry
+        - rationale
+
+    OptionsSnapshot:
+      type: object
+      properties:
+        sentiment:
+          type: string
+          enum: [bullish, bearish, neutral]
+        putCallRatio:
+          type: ["number", "null"]
+        unusualActivity:
+          type: string
+        topCallPick:
+          $ref: "#/components/schemas/OptionPick"
+        topPutPick:
+          $ref: "#/components/schemas/OptionPick"
+      required:
+        - sentiment
+        - unusualActivity
+
+    StockAnalysis:
+      type: object
+      properties:
+        symbol:
+          type: string
+        generatedAt:
+          type: string
+        trend:
+          $ref: "#/components/schemas/TrendPrediction"
+        intraday:
+          $ref: "#/components/schemas/IntradayAnalysis"
+        technicalIndicators:
+          $ref: "#/components/schemas/TechnicalIndicators"
+        optionsSnapshot:
+          $ref: "#/components/schemas/OptionsSnapshot"
+      required:
+        - symbol
+        - generatedAt
+        - trend
+        - intraday
+        - technicalIndicators
+
+    StrategyLeg:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [call, put, stock]
+        action:
+          type: string
+          enum: [buy, sell]
+        strike:
+          type: ["number", "null"]
+        expiry:
+          type: ["string", "null"]
+        premium:
+          type: ["number", "null"]
+        contracts:
+          type: number
+      required:
+        - type
+        - action
+        - contracts
+
+    OptionsStrategyRequest:
+      type: object
+      properties:
+        investmentAmount:
+          type: number
+      required:
+        - investmentAmount
+
+    OptionsStrategy:
+      type: object
+      properties:
+        symbol:
+          type: string
+        investmentAmount:
+          type: number
+        strategyName:
+          type: string
+        strategyType:
+          type: string
+          enum: [bullish, bearish, neutral, volatile]
+        legs:
+          type: array
+          items:
+            $ref: "#/components/schemas/StrategyLeg"
+        totalCost:
+          type: ["number", "null"]
+        maxProfit:
+          type: string
+        maxLoss:
+          type: string
+        breakeven:
+          type: string
+        probability:
+          type: number
+        riskLevel:
+          type: string
+          enum: [low, medium, high]
+        reasoning:
+          type: string
+        entryTiming:
+          type: string
+        exitStrategy:
+          type: string
+      required:
+        - symbol
+        - investmentAmount
+        - strategyName
+        - strategyType
+        - legs
+        - maxProfit
+        - maxLoss
+        - breakeven
+        - probability
+        - riskLevel
+        - reasoning
+        - entryTiming
+        - exitStrategy

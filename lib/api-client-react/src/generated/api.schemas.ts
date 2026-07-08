@@ -169,6 +169,190 @@ export interface TrendingTicker {
   marketCap?: number | null;
 }
 
+export interface PriceTargets {
+  /** @nullable */
+  support?: number | null;
+  /** @nullable */
+  resistance?: number | null;
+  /** @nullable */
+  oneWeek?: number | null;
+  /** @nullable */
+  oneMonth?: number | null;
+}
+
+export type TrendPredictionDirection = typeof TrendPredictionDirection[keyof typeof TrendPredictionDirection];
+
+
+export const TrendPredictionDirection = {
+  bullish: 'bullish',
+  bearish: 'bearish',
+  neutral: 'neutral',
+} as const;
+
+export interface TrendPrediction {
+  direction: TrendPredictionDirection;
+  confidence: number;
+  summary: string;
+  reasoning: string;
+  priceTargets?: PriceTargets;
+}
+
+export interface KeyLevel {
+  price: number;
+  type: string;
+  significance: string;
+}
+
+export type IntradayAnalysisBias = typeof IntradayAnalysisBias[keyof typeof IntradayAnalysisBias];
+
+
+export const IntradayAnalysisBias = {
+  bullish: 'bullish',
+  bearish: 'bearish',
+  neutral: 'neutral',
+} as const;
+
+export interface IntradayAnalysis {
+  bias: IntradayAnalysisBias;
+  setup: string;
+  keyLevels: KeyLevel[];
+  topPick: boolean;
+  /** @nullable */
+  topPickReason?: string | null;
+}
+
+export interface TechnicalIndicators {
+  /** @nullable */
+  rsi?: number | null;
+  /** @nullable */
+  macd?: number | null;
+  /** @nullable */
+  macdSignal?: number | null;
+  /** @nullable */
+  macdHistogram?: number | null;
+  /** @nullable */
+  bollingerUpper?: number | null;
+  /** @nullable */
+  bollingerMiddle?: number | null;
+  /** @nullable */
+  bollingerLower?: number | null;
+  /** @nullable */
+  sma20?: number | null;
+  /** @nullable */
+  sma50?: number | null;
+  /** @nullable */
+  sma200?: number | null;
+  /** @nullable */
+  atr?: number | null;
+  /** @nullable */
+  volumeRatio?: number | null;
+}
+
+export interface OptionPick {
+  strike: number;
+  expiry: string;
+  /** @nullable */
+  premium?: number | null;
+  rationale: string;
+}
+
+export type OptionsSnapshotSentiment = typeof OptionsSnapshotSentiment[keyof typeof OptionsSnapshotSentiment];
+
+
+export const OptionsSnapshotSentiment = {
+  bullish: 'bullish',
+  bearish: 'bearish',
+  neutral: 'neutral',
+} as const;
+
+export interface OptionsSnapshot {
+  sentiment: OptionsSnapshotSentiment;
+  /** @nullable */
+  putCallRatio?: number | null;
+  unusualActivity: string;
+  topCallPick?: OptionPick;
+  topPutPick?: OptionPick;
+}
+
+export interface StockAnalysis {
+  symbol: string;
+  generatedAt: string;
+  trend: TrendPrediction;
+  intraday: IntradayAnalysis;
+  technicalIndicators: TechnicalIndicators;
+  optionsSnapshot?: OptionsSnapshot;
+}
+
+export type StrategyLegType = typeof StrategyLegType[keyof typeof StrategyLegType];
+
+
+export const StrategyLegType = {
+  call: 'call',
+  put: 'put',
+  stock: 'stock',
+} as const;
+
+export type StrategyLegAction = typeof StrategyLegAction[keyof typeof StrategyLegAction];
+
+
+export const StrategyLegAction = {
+  buy: 'buy',
+  sell: 'sell',
+} as const;
+
+export interface StrategyLeg {
+  type: StrategyLegType;
+  action: StrategyLegAction;
+  /** @nullable */
+  strike?: number | null;
+  /** @nullable */
+  expiry?: string | null;
+  /** @nullable */
+  premium?: number | null;
+  contracts: number;
+}
+
+export interface OptionsStrategyRequest {
+  investmentAmount: number;
+}
+
+export type OptionsStrategyStrategyType = typeof OptionsStrategyStrategyType[keyof typeof OptionsStrategyStrategyType];
+
+
+export const OptionsStrategyStrategyType = {
+  bullish: 'bullish',
+  bearish: 'bearish',
+  neutral: 'neutral',
+  volatile: 'volatile',
+} as const;
+
+export type OptionsStrategyRiskLevel = typeof OptionsStrategyRiskLevel[keyof typeof OptionsStrategyRiskLevel];
+
+
+export const OptionsStrategyRiskLevel = {
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+} as const;
+
+export interface OptionsStrategy {
+  symbol: string;
+  investmentAmount: number;
+  strategyName: string;
+  strategyType: OptionsStrategyStrategyType;
+  legs: StrategyLeg[];
+  /** @nullable */
+  totalCost?: number | null;
+  maxProfit: string;
+  maxLoss: string;
+  breakeven: string;
+  probability: number;
+  riskLevel: OptionsStrategyRiskLevel;
+  reasoning: string;
+  entryTiming: string;
+  exitStrategy: string;
+}
+
 export type SearchSymbolsParams = {
 /**
  * Search query (ticker or company name)

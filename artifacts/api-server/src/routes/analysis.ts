@@ -250,6 +250,123 @@ function computeSignalScore(params: {
   return { direction, score, bullishCount, bearishCount, neutralCount, signals };
 }
 
+// ─── Dynamic research context builder ────────────────────────────────────────
+// Extracts every piece of live fundamental, analyst, and news data available
+// from Yahoo Finance and formats it as a structured text block for the Gemini
+// prompt. All fields are optional — missing data is silently omitted so the
+// prompt stays clean regardless of what Yahoo returns.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildResearchContext(summaryData: any, newsItems: any[]): string {
+  const fd  = summaryData?.financialData;
+  const ks  = summaryData?.defaultKeyStatistics;
+  const sd  = summaryData?.summaryDetail;
+  const cal = summaryData?.calendarEvents;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const upgrades: any[] = summaryData?.upgradeDowngradeHistory?.history || [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recTrend: any[] = summaryData?.recommendationTrend?.trend || [];
+
+  const sections: string[] = [];
+
+  // ── Analyst consensus ────────────────────────────────────────────────────────
+  const consensusParts: string[] = [];
+  if (fd?.recommendationKey)
+    consensusParts.push(`Consensus: ${fd.recommendationKey.replace(/_/g, " ").toUpperCase()}`);
+  if (fd?.numberOfAnalystOpinions)
+    consensusParts.push(`Analysts covering: ${fd.numberOfAnalystOpinions}`);
+  if (fd?.targetMeanPrice)
+    consensusParts.push(`Mean price target: ${fd.targetMeanPrice.toFixed(2)}`);
+  if (fd?.targetLowPrice && fd?.targetHighPrice)
+    consensusParts.push(`Target range: ${fd.targetLowPrice.toFixed(2)} – ${fd.targetHighPrice.toFixed(2)}`);
+  if (consensusParts.length)
+    sections.push(`ANALYST CONSENSUS\n${consensusParts.map(p => `  ${p}`).join("\n")}`);
+
+  // ── Recommendation trend (current month breakdown) ───────────────────────────
+  const cm = recTrend.find((t) => t.period === "0m");
+  if (cm) {
+    sections.push(
+      `RECOMMENDATION TREND (current month)\n` +
+      `  Strong Buy: ${cm.strongBuy}  Buy: ${cm.buy}  Hold: ${cm.hold}  Sell: ${cm.sell}  Strong Sell: ${cm.strongSell}`
+    );
+  }
+
+  // ── Upcoming earnings ────────────────────────────────────────────────────────
+  const nextEarningsRaw = cal?.earnings?.earningsDate?.[0];
+  if (nextEarningsRaw) {
+    const d = new Date(typeof nextEarningsRaw === "number" ? nextEarningsRaw * 1000 : nextEarningsRaw);
+    const daysAway = Math.round((d.getTime() - Date.now()) / 86_400_000);
+    const when = daysAway > 0 ? `in ${daysAway} days` : daysAway === 0 ? "TODAY" : `${Math.abs(daysAway)} days ago`;
+    sections.push(`UPCOMING EARNINGS\n  ${d.toDateString()} (${when})`);
+  }
+
+  // ── Valuation ────────────────────────────────────────────────────────────────
+  const valParts: string[] = [];
+  if (sd?.trailingPE)    valParts.push(`P/E (TTM): ${sd.trailingPE.toFixed(1)}`);
+  if (ks?.forwardPE)     valParts.push(`P/E (Fwd): ${ks.forwardPE.toFixed(1)}`);
+  if (ks?.pegRatio)      valParts.push(`PEG: ${ks.pegRatio.toFixed(2)}`);
+  if (ks?.priceToBook)   valParts.push(`P/B: ${ks.priceToBook.toFixed(2)}`);
+  if (valParts.length)
+    sections.push(`VALUATION\n${valParts.map(p => `  ${p}`).join("\n")}`);
+
+  // ── Fundamental quality ──────────────────────────────────────────────────────
+  const fundParts: string[] = [];
+  if (fd?.revenueGrowth   != null) fundParts.push(`Revenue growth (YoY): ${(fd.revenueGrowth * 100).toFixed(1)}%`);
+  if (fd?.earningsGrowth  != null) fundParts.push(`Earnings growth (YoY): ${(fd.earningsGrowth * 100).toFixed(1)}%`);
+  if (fd?.grossMargins    != null) fundParts.push(`Gross margin: ${(fd.grossMargins * 100).toFixed(1)}%`);
+  if (fd?.ebitdaMargins   != null) fundParts.push(`EBITDA margin: ${(fd.ebitdaMargins * 100).toFixed(1)}%`);
+  if (fd?.returnOnEquity  != null) fundParts.push(`ROE: ${(fd.returnOnEquity * 100).toFixed(1)}%`);
+  if (fd?.returnOnAssets  != null) fundParts.push(`ROA: ${(fd.returnOnAssets * 100).toFixed(1)}%`);
+  if (fd?.freeCashflow    != null) fundParts.push(`Free cash flow: ${(fd.freeCashflow / 1e9).toFixed(2)}B`);
+  if (fd?.debtToEquity    != null) fundParts.push(`Debt/Equity: ${fd.debtToEquity.toFixed(2)}`);
+  if (fd?.currentRatio    != null) fundParts.push(`Current ratio: ${fd.currentRatio.toFixed(2)}`);
+  if (fundParts.length)
+    sections.push(`FUNDAMENTALS\n${fundParts.map(p => `  ${p}`).join("\n")}`);
+
+  // ── Short interest ───────────────────────────────────────────────────────────
+  const shortParts: string[] = [];
+  if (ks?.shortRatio           != null) shortParts.push(`Days to cover: ${ks.shortRatio.toFixed(1)}`);
+  if (ks?.shortPercentOfFloat  != null) shortParts.push(`Short % of float: ${(ks.shortPercentOfFloat * 100).toFixed(1)}%`);
+  if (ks?.sharesShortPriorMonth != null && ks?.sharesShort != null) {
+    const chg = ((ks.sharesShort - ks.sharesShortPriorMonth) / ks.sharesShortPriorMonth) * 100;
+    shortParts.push(`Short interest change MoM: ${chg > 0 ? "+" : ""}${chg.toFixed(1)}%`);
+  }
+  if (shortParts.length)
+    sections.push(`SHORT INTEREST\n${shortParts.map(p => `  ${p}`).join("\n")}`);
+
+  // ── Recent analyst upgrades/downgrades (last 5) ──────────────────────────────
+  const recentActions = upgrades.slice(0, 5);
+  if (recentActions.length) {
+    const rows = recentActions.map((u) => {
+      const d = new Date(u.epochGradeDate * 1000);
+      const daysAgo = Math.round((Date.now() - d.getTime()) / 86_400_000);
+      const change = u.fromGrade ? `${u.fromGrade} → ${u.toGrade}` : u.toGrade;
+      return `  ${u.firm}: ${u.action?.toUpperCase()} ${change} (${daysAgo}d ago)`;
+    });
+    sections.push(`RECENT ANALYST ACTIONS\n${rows.join("\n")}`);
+  }
+
+  // ── News (with publisher and age) ────────────────────────────────────────────
+  if (newsItems.length) {
+    const rows = newsItems.map((n, i) => {
+      const ageSecs = n.providerPublishTime
+        ? Math.round(Date.now() / 1000 - n.providerPublishTime)
+        : null;
+      const ageLabel = ageSecs != null
+        ? ageSecs < 3600 ? `${Math.round(ageSecs / 60)}m ago`
+          : ageSecs < 86400 ? `${Math.round(ageSecs / 3600)}h ago`
+          : `${Math.round(ageSecs / 86400)}d ago`
+        : "recent";
+      const source = n.publisher ? ` — ${n.publisher}` : "";
+      return `  ${i + 1}. [${ageLabel}] ${n.title}${source}`;
+    });
+    sections.push(`RECENT NEWS\n${rows.join("\n")}`);
+  } else {
+    sections.push("RECENT NEWS\n  No recent news available");
+  }
+
+  return sections.join("\n\n");
+}
+
 // ─── Risk-free rate (live 13-week T-bill yield, cached) ───────────────────────
 
 let riskFreeRateCache: { value: number; fetchedAt: number } | null = null;
@@ -310,7 +427,14 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
         }) as Promise<any>,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (yahooFinance as any).quoteSummary(symbol, {
-          modules: ["summaryDetail", "defaultKeyStatistics", "financialData"],
+          modules: [
+            "summaryDetail",
+            "defaultKeyStatistics",
+            "financialData",
+            "calendarEvents",
+            "upgradeDowngradeHistory",
+            "recommendationTrend",
+          ],
         }) as Promise<any>,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (yahooFinance as any).search(symbol, {
@@ -433,18 +557,17 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
       };
     }
 
-    // ── News headlines
+    // ── News (rich — preserve publisher and publication timestamp)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const headlines: string[] =
+    const newsItems: any[] =
       newsResult.status === "fulfilled"
-        ? (newsResult.value?.news || [])
-            .slice(0, 5)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            .map((n: any) => n.title)
-            .filter(Boolean)
+        ? (newsResult.value?.news || []).slice(0, 6).filter(Boolean)
         : [];
 
     const summaryData = summary.status === "fulfilled" ? summary.value : null;
+
+    // ── Build rich research context for Gemini ─────────────────────────────────
+    const dynamicContext = buildResearchContext(summaryData, newsItems);
 
     // ── Build Gemini prompt — qualitative overlay ONLY.
     // The signal score (direction + confidence) is computed deterministically
@@ -454,32 +577,33 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
 
 CRITICAL INSTRUCTION: Do NOT simply echo the technical indicator readings in your direction call. Your direction and confidence should reflect your qualitative judgment that incorporates NEWS and MACRO CONTEXT. It is valid and expected to DISAGREE with the technical signal score when fundamentals or news warrant it — that disagreement is where your value lies. Do NOT invent precise dollar figures for options premiums or probabilities — those are computed from live market data separately.
 
-STOCK: ${symbol}
-Current Price: $${spot.toFixed(2)}
-Change: ${q.regularMarketChange?.toFixed(2) ?? "0"} (${q.regularMarketChangePercent?.toFixed(2) ?? "0"}%)
-Day Range: $${q.regularMarketDayLow?.toFixed(2) ?? "?"} – $${q.regularMarketDayHigh?.toFixed(2) ?? "?"}
-52W Range: $${q.fiftyTwoWeekLow?.toFixed(2) ?? "?"} – $${q.fiftyTwoWeekHigh?.toFixed(2) ?? "?"}
-Market State: ${q.marketState ?? "REGULAR"}
-Volume: ${(q.regularMarketVolume || 0).toLocaleString()} vs Avg ${Math.round(avgVol || 0).toLocaleString()}
-Market Cap: $${q.marketCap ? (q.marketCap / 1e9).toFixed(2) + "B" : "N/A"}
-Beta: ${summaryData?.summaryDetail?.beta?.toFixed(2) ?? "N/A"}
-P/E (Trailing): ${summaryData?.summaryDetail?.trailingPE?.toFixed(2) ?? "N/A"}
+═══ MARKET DATA ═══════════════════════════════════════════════════════════════
+Symbol: ${symbol}
+Price:  ${spot.toFixed(2)}  (${q.regularMarketChange?.toFixed(2) ?? "0"} / ${q.regularMarketChangePercent?.toFixed(2) ?? "0"}%)
+Range:  Day ${q.regularMarketDayLow?.toFixed(2) ?? "?"} – ${q.regularMarketDayHigh?.toFixed(2) ?? "?"}  |  52W ${q.fiftyTwoWeekLow?.toFixed(2) ?? "?"} – ${q.fiftyTwoWeekHigh?.toFixed(2) ?? "?"}
+Volume: ${(q.regularMarketVolume || 0).toLocaleString()} (${technicalIndicators.volumeRatio ?? "?"}x avg)
+Cap:    ${q.marketCap ? (q.marketCap / 1e9).toFixed(2) + "B" : "N/A"}  |  Beta: ${summaryData?.summaryDetail?.beta?.toFixed(2) ?? "N/A"}  |  Market: ${q.marketState ?? "REGULAR"}
 
-TECHNICAL INDICATORS:
-- RSI(14): ${technicalIndicators.rsi ?? "N/A"} ${technicalIndicators.rsi !== null ? (technicalIndicators.rsi > 70 ? "(OVERBOUGHT)" : technicalIndicators.rsi < 30 ? "(OVERSOLD)" : "(NEUTRAL)") : ""}
-- MACD: ${technicalIndicators.macd ?? "N/A"} | Signal: ${technicalIndicators.macdSignal ?? "N/A"} | Histogram: ${technicalIndicators.macdHistogram ?? "N/A"}
-- Bollinger Bands: Upper $${technicalIndicators.bollingerUpper ?? "?"} | Mid $${technicalIndicators.bollingerMiddle ?? "?"} | Lower $${technicalIndicators.bollingerLower ?? "?"}
-- SMA 20: $${technicalIndicators.sma20 ?? "N/A"} | SMA 50: $${technicalIndicators.sma50 ?? "N/A"} | SMA 200: $${technicalIndicators.sma200 ?? "N/A"}
-- ATR(14): ${technicalIndicators.atr ?? "N/A"}
-- Volume Ratio: ${technicalIndicators.volumeRatio ?? "N/A"}x
+═══ FORMULA-BASED SIGNAL SCORE (computed before you — reference this) ══════════
+Direction: ${signalScore.direction.toUpperCase()}  |  Score: ${signalScore.score > 0 ? "+" : ""}${signalScore.score} / 100  (${signalScore.bullishCount} bullish, ${signalScore.bearishCount} bearish, ${signalScore.neutralCount} neutral signals)
+${signalScore.signals.map(s => `  ${s.signal.padEnd(7)} ${s.name.padEnd(20)} ${s.value}`).join("\n")}
 
-AVAILABLE OPTIONS CONTRACTS (nearest expiry${optChain?.expirationDate ? ": " + new Date(optChain.expirationDate).toDateString() : ""}) — choose your top pick strike ONLY from these lists:
-${optChain ? `Put/Call Volume Ratio: ${optChain.putCallRatio ?? "N/A"}
-Calls: ${optChain.topCalls.map((c: any) => `$${c.strike} (IV ${c.impliedVolatility}%, vol ${c.volume}, OI ${c.openInterest})`).join(" | ")}
-Puts: ${optChain.topPuts.map((p: any) => `$${p.strike} (IV ${p.impliedVolatility}%, vol ${p.volume}, OI ${p.openInterest})`).join(" | ")}` : "Options data unavailable"}
+═══ TECHNICAL INDICATORS ═══════════════════════════════════════════════════════
+RSI(14):         ${technicalIndicators.rsi ?? "N/A"}${technicalIndicators.rsi !== null ? ` — ${technicalIndicators.rsi > 70 ? "OVERBOUGHT" : technicalIndicators.rsi < 30 ? "OVERSOLD" : "NEUTRAL"}` : ""}
+MACD:            ${technicalIndicators.macd ?? "N/A"}  |  Signal: ${technicalIndicators.macdSignal ?? "N/A"}  |  Histogram: ${technicalIndicators.macdHistogram ?? "N/A"}
+Bollinger Bands: Upper ${technicalIndicators.bollingerUpper ?? "?"}  |  Mid ${technicalIndicators.bollingerMiddle ?? "?"}  |  Lower ${technicalIndicators.bollingerLower ?? "?"}
+Moving Averages: SMA20 ${technicalIndicators.sma20 ?? "N/A"}  |  SMA50 ${technicalIndicators.sma50 ?? "N/A"}  |  SMA200 ${technicalIndicators.sma200 ?? "N/A"}
+ATR(14):         ${technicalIndicators.atr ?? "N/A"}
 
-RECENT NEWS:
-${headlines.length ? headlines.map((h, i) => `${i + 1}. ${h}`).join("\n") : "No recent news available"}
+═══ OPTIONS FLOW (nearest expiry${optChain?.expirationDate ? ": " + new Date(optChain.expirationDate).toDateString() : ""}) ════════════════════════
+${optChain
+  ? `Put/Call Volume Ratio: ${optChain.putCallRatio ?? "N/A"}
+Top Calls: ${optChain.topCalls.map((c: any) => `${c.strike} (IV ${c.impliedVolatility}%, vol ${c.volume}, OI ${c.openInterest})`).join(" | ")}
+Top Puts:  ${optChain.topPuts.map((p: any) => `${p.strike} (IV ${p.impliedVolatility}%, vol ${p.volume}, OI ${p.openInterest})`).join(" | ")}`
+  : "Options data unavailable"}
+
+═══ LIVE RESEARCH CONTEXT ══════════════════════════════════════════════════════
+${dynamicContext}
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no explanation outside JSON):
 {

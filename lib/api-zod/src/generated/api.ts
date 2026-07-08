@@ -167,6 +167,20 @@ export const GetStockAnalysisParams = zod.object({
 export const GetStockAnalysisResponse = zod.object({
   "symbol": zod.string(),
   "generatedAt": zod.string(),
+  "signalScore": zod.object({
+  "direction": zod.enum(['bullish', 'bearish', 'neutral']),
+  "score": zod.number().describe('Normalised weighted score from -100 (max bearish) to +100 (max bullish)'),
+  "bullishCount": zod.number(),
+  "bearishCount": zod.number(),
+  "neutralCount": zod.number(),
+  "signals": zod.array(zod.object({
+  "name": zod.string(),
+  "signal": zod.enum(['bullish', 'bearish', 'neutral']),
+  "weight": zod.number(),
+  "value": zod.string(),
+  "note": zod.string()
+}))
+}).describe('Rules-based signal confluence score computed deterministically from standard financial formulas (Wilder RSI, SMA-seeded EMA, MACD, Bollinger Bands, moving average alignment, volume). Not an AI estimate.\n'),
   "trend": zod.object({
   "direction": zod.enum(['bullish', 'bearish', 'neutral']),
   "confidence": zod.number(),

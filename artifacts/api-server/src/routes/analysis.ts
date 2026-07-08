@@ -24,48 +24,74 @@ function calcSMA(closes: number[], period: number): number | null {
   return slice.reduce((a, b) => a + b, 0) / period;
 }
 
+/**
+ * EMA seeded with the SMA of the first `period` values — the standard used by
+ * Bloomberg, TradingView, and thinkorswim. Returns NaN for the warm-up window.
+ */
 function calcEMA(values: number[], period: number): number[] {
+  if (values.length < period) return values.map(() => NaN);
   const k = 2 / (period + 1);
-  const ema: number[] = [values[0]];
-  for (let i = 1; i < values.length; i++) {
-    ema.push(values[i] * k + ema[i - 1] * (1 - k));
+  const result: number[] = new Array(period - 1).fill(NaN);
+  const seed = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  result.push(seed);
+  for (let i = period; i < values.length; i++) {
+    result.push(values[i] * k + result[result.length - 1] * (1 - k));
   }
-  return ema;
+  return result;
 }
 
+/**
+ * RSI using Wilder's Smoothed Moving Average — the standard on Bloomberg,
+ * TradingView, and all major professional platforms.
+ * Seeds with SMA of the first `period` changes, then applies
+ * avgGain = (prev × (period-1) + current) / period for every subsequent bar.
+ */
 function calcRSI(closes: number[], period = 14): number | null {
   if (closes.length < period + 1) return null;
-  let gains = 0,
-    losses = 0;
-  for (let i = closes.length - period; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) gains += diff;
-    else losses += Math.abs(diff);
+  const changes: number[] = [];
+  for (let i = 1; i < closes.length; i++) changes.push(closes[i] - closes[i - 1]);
+  // Step 1 — seed with simple average of first `period` changes
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 0; i < period; i++) {
+    if (changes[i] > 0) avgGain += changes[i];
+    else avgLoss += Math.abs(changes[i]);
   }
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
+  avgGain /= period;
+  avgLoss /= period;
+  // Step 2 — Wilder's smoothing for all remaining changes
+  for (let i = period; i < changes.length; i++) {
+    const gain = changes[i] > 0 ? changes[i] : 0;
+    const loss = changes[i] < 0 ? Math.abs(changes[i]) : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
   if (avgLoss === 0) return 100;
   return 100 - 100 / (1 + avgGain / avgLoss);
 }
 
+/**
+ * MACD(12,26,9) with NaN-safe handling of the corrected SMA-seeded EMA.
+ * The MACD line is valid from bar 25 onward; the signal line from bar 33 onward.
+ */
 function calcMACD(closes: number[]): {
   macd: number | null;
   signal: number | null;
   histogram: number | null;
 } {
-  if (closes.length < 35)
-    return { macd: null, signal: null, histogram: null };
+  // SMA-seeded EMA-26 valid at 26 closes; 9 valid MACD values exist at 34 closes.
+  if (closes.length < 34) return { macd: null, signal: null, histogram: null };
   const ema12 = calcEMA(closes, 12);
   const ema26 = calcEMA(closes, 26);
-  const macdLine = ema12.map((v, i) => v - ema26[i]);
-  const signalLine = calcEMA(macdLine.slice(-9), 9);
-  const lastMacd = macdLine[macdLine.length - 1];
-  const lastSignal = signalLine[signalLine.length - 1];
-  return {
-    macd: lastMacd,
-    signal: lastSignal,
-    histogram: lastMacd - lastSignal,
-  };
+  const macdLine: number[] = ema12.map((v, i) =>
+    isNaN(v) || isNaN(ema26[i]) ? NaN : v - ema26[i],
+  );
+  const validMacd = macdLine.filter((v) => !isNaN(v));
+  if (validMacd.length < 9) return { macd: null, signal: null, histogram: null };
+  const signalArr = calcEMA(validMacd, 9);
+  const lastMacd = validMacd[validMacd.length - 1];
+  const lastSignal = signalArr[signalArr.length - 1];
+  if (isNaN(lastSignal)) return { macd: lastMacd, signal: null, histogram: null };
+  return { macd: lastMacd, signal: lastSignal, histogram: lastMacd - lastSignal };
 }
 
 function calcBollinger(
@@ -98,6 +124,130 @@ function calcATR(
     );
   }
   return trs.slice(-period).reduce((a, b) => a + b, 0) / period;
+}
+
+// ─── Rules-based signal confluence score ──────────────────────────────────────
+
+interface TechnicalSignal {
+  name: string;
+  signal: "bullish" | "bearish" | "neutral";
+  weight: number;
+  value: string;
+  note: string;
+}
+
+interface SignalScore {
+  direction: "bullish" | "bearish" | "neutral";
+  /** Normalised weighted score: -100 (max bearish) → +100 (max bullish). */
+  score: number;
+  bullishCount: number;
+  bearishCount: number;
+  neutralCount: number;
+  signals: TechnicalSignal[];
+}
+
+function computeSignalScore(params: {
+  spot: number;
+  rsi: number | null;
+  macd: number | null;
+  macdSignal: number | null;
+  macdHistogram: number | null;
+  sma20: number | null;
+  sma50: number | null;
+  sma200: number | null;
+  bollingerUpper: number | null;
+  bollingerLower: number | null;
+  volumeRatio: number | null;
+  dayChange: number | null;
+}): SignalScore {
+  const signals: TechnicalSignal[] = [];
+
+  // RSI — weight up to 15
+  if (params.rsi !== null) {
+    if (params.rsi < 30)
+      signals.push({ name: "RSI (14)", signal: "bullish", weight: 15, value: params.rsi.toFixed(1), note: "Oversold — potential mean reversion" });
+    else if (params.rsi > 70)
+      signals.push({ name: "RSI (14)", signal: "bearish", weight: 15, value: params.rsi.toFixed(1), note: "Overbought — elevated pullback risk" });
+    else if (params.rsi < 45)
+      signals.push({ name: "RSI (14)", signal: "bullish", weight: 8, value: params.rsi.toFixed(1), note: "Below midline — room to run higher" });
+    else if (params.rsi > 55)
+      signals.push({ name: "RSI (14)", signal: "bearish", weight: 8, value: params.rsi.toFixed(1), note: "Above midline — approaching extended territory" });
+    else
+      signals.push({ name: "RSI (14)", signal: "neutral", weight: 0, value: params.rsi.toFixed(1), note: "Neutral zone (45–55)" });
+  }
+
+  // MACD Histogram — weight 20
+  if (params.macdHistogram !== null) {
+    const dir: "bullish" | "bearish" = params.macdHistogram > 0 ? "bullish" : "bearish";
+    signals.push({ name: "MACD Histogram", signal: dir, weight: 20, value: params.macdHistogram.toFixed(4), note: dir === "bullish" ? "Positive — momentum expanding bullish" : "Negative — momentum expanding bearish" });
+  }
+
+  // MACD vs Signal crossover — weight 15
+  if (params.macd !== null && params.macdSignal !== null) {
+    const dir: "bullish" | "bearish" = params.macd > params.macdSignal ? "bullish" : "bearish";
+    signals.push({ name: "MACD vs Signal", signal: dir, weight: 15, value: `${params.macd.toFixed(3)} vs ${params.macdSignal.toFixed(3)}`, note: dir === "bullish" ? "MACD above signal line" : "MACD below signal line" });
+  }
+
+  // Price vs SMA 20 — weight 10
+  if (params.sma20 !== null) {
+    const dir: "bullish" | "bearish" = params.spot > params.sma20 ? "bullish" : "bearish";
+    signals.push({ name: "Price vs SMA 20", signal: dir, weight: 10, value: `${params.spot.toFixed(2)} vs ${params.sma20.toFixed(2)}`, note: dir === "bullish" ? "Above 20-day average — short-term uptrend" : "Below 20-day average — short-term downtrend" });
+  }
+
+  // Price vs SMA 50 — weight 10
+  if (params.sma50 !== null) {
+    const dir: "bullish" | "bearish" = params.spot > params.sma50 ? "bullish" : "bearish";
+    signals.push({ name: "Price vs SMA 50", signal: dir, weight: 10, value: `${params.spot.toFixed(2)} vs ${params.sma50.toFixed(2)}`, note: dir === "bullish" ? "Above 50-day average — medium-term strength" : "Below 50-day average — medium-term weakness" });
+  }
+
+  // Price vs SMA 200 — weight 15
+  if (params.sma200 !== null) {
+    const dir: "bullish" | "bearish" = params.spot > params.sma200 ? "bullish" : "bearish";
+    signals.push({ name: "Price vs SMA 200", signal: dir, weight: 15, value: `${params.spot.toFixed(2)} vs ${params.sma200.toFixed(2)}`, note: dir === "bullish" ? "Above 200-day average — secular uptrend" : "Below 200-day average — secular downtrend" });
+  }
+
+  // SMA 20 vs SMA 50 alignment (golden/death cross) — weight 10
+  if (params.sma20 !== null && params.sma50 !== null) {
+    const dir: "bullish" | "bearish" = params.sma20 > params.sma50 ? "bullish" : "bearish";
+    signals.push({ name: "SMA Alignment", signal: dir, weight: 10, value: `SMA20 ${params.sma20.toFixed(2)} / SMA50 ${params.sma50.toFixed(2)}`, note: dir === "bullish" ? "Short-term above medium-term (golden alignment)" : "Short-term below medium-term (death-cross alignment)" });
+  }
+
+  // Bollinger Band position — weight 10
+  if (params.bollingerUpper !== null && params.bollingerLower !== null) {
+    const range = params.bollingerUpper - params.bollingerLower;
+    if (range > 0) {
+      const pct = (params.spot - params.bollingerLower) / range;
+      if (pct < 0.15)
+        signals.push({ name: "Bollinger Position", signal: "bullish", weight: 10, value: `${(pct * 100).toFixed(0)}% of band`, note: "Near lower band — oversold within range" });
+      else if (pct > 0.85)
+        signals.push({ name: "Bollinger Position", signal: "bearish", weight: 10, value: `${(pct * 100).toFixed(0)}% of band`, note: "Near upper band — extended, mean-reversion risk" });
+      else
+        signals.push({ name: "Bollinger Position", signal: "neutral", weight: 0, value: `${(pct * 100).toFixed(0)}% of band`, note: "Mid-band — no directional edge" });
+    }
+  }
+
+  // Volume confirmation — weight 10
+  if (params.volumeRatio !== null && params.dayChange !== null) {
+    if (params.volumeRatio > 1.3 && params.dayChange > 0)
+      signals.push({ name: "Volume", signal: "bullish", weight: 10, value: `${params.volumeRatio.toFixed(2)}x avg`, note: "Above-average volume on up day — institutional conviction" });
+    else if (params.volumeRatio > 1.3 && params.dayChange < 0)
+      signals.push({ name: "Volume", signal: "bearish", weight: 10, value: `${params.volumeRatio.toFixed(2)}x avg`, note: "Above-average volume on down day — distribution pressure" });
+    else
+      signals.push({ name: "Volume", signal: "neutral", weight: 0, value: `${params.volumeRatio.toFixed(2)}x avg`, note: "Average volume — no directional confirmation" });
+  }
+
+  // Aggregate
+  let weightedSum = 0, maxWeight = 0;
+  let bullishCount = 0, bearishCount = 0, neutralCount = 0;
+  for (const s of signals) {
+    if (s.signal === "bullish") { weightedSum += s.weight; bullishCount++; }
+    else if (s.signal === "bearish") { weightedSum -= s.weight; bearishCount++; }
+    else { neutralCount++; }
+    maxWeight += s.weight;
+  }
+  const score = maxWeight > 0 ? Math.round((weightedSum / maxWeight) * 100) : 0;
+  const direction: "bullish" | "bearish" | "neutral" = score >= 20 ? "bullish" : score <= -20 ? "bearish" : "neutral";
+  return { direction, score, bullishCount, bearishCount, neutralCount, signals };
 }
 
 // ─── Risk-free rate (live 13-week T-bill yield, cached) ───────────────────────
@@ -219,6 +369,22 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
       volumeRatio: volumeRatio ? +volumeRatio.toFixed(2) : null,
     };
 
+    // ── Formula-based signal score (computed before AI, independent of LLM)
+    const signalScore = computeSignalScore({
+      spot,
+      rsi,
+      macd,
+      macdSignal,
+      macdHistogram,
+      sma20,
+      sma50,
+      sma200,
+      bollingerUpper: bb.upper,
+      bollingerLower: bb.lower,
+      volumeRatio,
+      dayChange: q.regularMarketChange ?? null,
+    });
+
     // ── Options chain summary (real market data only — no invented numbers)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let optChain: any = null;
@@ -280,10 +446,13 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
 
     const summaryData = summary.status === "fulfilled" ? summary.value : null;
 
-    // ── Build Gemini prompt — ask ONLY for qualitative judgment + a strike choice.
-    // All prices/probabilities/greeks for the chosen contracts are computed
-    // afterward with Black-Scholes from real market IV, never invented by the model.
-    const prompt = `You are a professional quantitative analyst with 20+ years of experience. Analyze the following real-time stock data and give a sharp, well-reasoned qualitative read. Do NOT invent precise dollar figures for options premiums or probabilities — those will be computed separately from live market data. You MAY reference the technical levels and news given.
+    // ── Build Gemini prompt — qualitative overlay ONLY.
+    // The signal score (direction + confidence) is computed deterministically
+    // from formulas above. Gemini's role is to add qualitative context that
+    // formulas cannot: news, macro, sector, earnings risk, narrative.
+    const prompt = `You are a professional quantitative analyst with 20+ years of experience. A rules-based algorithm has already scored the technical indicators below — your role is to provide the QUALITATIVE OVERLAY that formulas cannot capture: news context, macro environment, sector rotation, earnings risk, and non-quantitative factors.
+
+CRITICAL INSTRUCTION: Do NOT simply echo the technical indicator readings in your direction call. Your direction and confidence should reflect your qualitative judgment that incorporates NEWS and MACRO CONTEXT. It is valid and expected to DISAGREE with the technical signal score when fundamentals or news warrant it — that disagreement is where your value lies. Do NOT invent precise dollar figures for options premiums or probabilities — those are computed from live market data separately.
 
 STOCK: ${symbol}
 Current Price: $${spot.toFixed(2)}
@@ -414,6 +583,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no expla
     res.json({
       symbol,
       generatedAt: new Date().toISOString(),
+      signalScore,
       trend: aiOutput.trend,
       intraday: aiOutput.intraday,
       technicalIndicators,

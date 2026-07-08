@@ -303,9 +303,49 @@ export interface OptionsSnapshot {
   topPutPick?: OptionPick;
 }
 
+export type TechnicalSignalSignal = typeof TechnicalSignalSignal[keyof typeof TechnicalSignalSignal];
+
+
+export const TechnicalSignalSignal = {
+  bullish: 'bullish',
+  bearish: 'bearish',
+  neutral: 'neutral',
+} as const;
+
+export interface TechnicalSignal {
+  name: string;
+  signal: TechnicalSignalSignal;
+  weight: number;
+  value: string;
+  note: string;
+}
+
+export type SignalScoreDirection = typeof SignalScoreDirection[keyof typeof SignalScoreDirection];
+
+
+export const SignalScoreDirection = {
+  bullish: 'bullish',
+  bearish: 'bearish',
+  neutral: 'neutral',
+} as const;
+
+/**
+ * Rules-based signal confluence score computed deterministically from standard financial formulas (Wilder RSI, SMA-seeded EMA, MACD, Bollinger Bands, moving average alignment, volume). Not an AI estimate.
+ */
+export interface SignalScore {
+  direction: SignalScoreDirection;
+  /** Normalised weighted score from -100 (max bearish) to +100 (max bullish) */
+  score: number;
+  bullishCount: number;
+  bearishCount: number;
+  neutralCount: number;
+  signals: TechnicalSignal[];
+}
+
 export interface StockAnalysis {
   symbol: string;
   generatedAt: string;
+  signalScore: SignalScore;
   trend: TrendPrediction;
   intraday: IntradayAnalysis;
   technicalIndicators: TechnicalIndicators;

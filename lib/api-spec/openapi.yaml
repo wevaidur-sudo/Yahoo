@@ -614,6 +614,58 @@ components:
         - sentiment
         - unusualActivity
 
+    TechnicalSignal:
+      type: object
+      properties:
+        name:
+          type: string
+        signal:
+          type: string
+          enum: [bullish, bearish, neutral]
+        weight:
+          type: number
+        value:
+          type: string
+        note:
+          type: string
+      required:
+        - name
+        - signal
+        - weight
+        - value
+        - note
+
+    SignalScore:
+      type: object
+      description: >
+        Rules-based signal confluence score computed deterministically from
+        standard financial formulas (Wilder RSI, SMA-seeded EMA, MACD, Bollinger
+        Bands, moving average alignment, volume). Not an AI estimate.
+      properties:
+        direction:
+          type: string
+          enum: [bullish, bearish, neutral]
+        score:
+          type: number
+          description: Normalised weighted score from -100 (max bearish) to +100 (max bullish)
+        bullishCount:
+          type: number
+        bearishCount:
+          type: number
+        neutralCount:
+          type: number
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/TechnicalSignal"
+      required:
+        - direction
+        - score
+        - bullishCount
+        - bearishCount
+        - neutralCount
+        - signals
+
     StockAnalysis:
       type: object
       properties:
@@ -621,6 +673,8 @@ components:
           type: string
         generatedAt:
           type: string
+        signalScore:
+          $ref: "#/components/schemas/SignalScore"
         trend:
           $ref: "#/components/schemas/TrendPrediction"
         intraday:
@@ -634,6 +688,7 @@ components:
       required:
         - symbol
         - generatedAt
+        - signalScore
         - trend
         - intraday
         - technicalIndicators

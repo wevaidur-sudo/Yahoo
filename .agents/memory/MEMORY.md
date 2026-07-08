@@ -1,0 +1,1 @@
+- [AI Analysis Architecture](ai-analysis-architecture.md) — signal score is formula-based (deterministic), Gemini provides qualitative overlay only; score normalization uses fixed category weights in denominator even for neutral signals.

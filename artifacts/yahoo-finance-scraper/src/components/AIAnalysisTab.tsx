@@ -121,6 +121,59 @@ function ConfidenceBar({ value }: { value: number }) {
   );
 }
 
+/** Bidirectional bar: centre = 0, left = bearish, right = bullish. */
+function SignalBar({ score }: { score: number }) {
+  const clamped = Math.max(-100, Math.min(100, score));
+  const color = clamped >= 20 ? "#00C853" : clamped <= -20 ? "#FF333A" : "#f59e0b";
+  const pct = Math.abs(clamped);
+  const isPositive = clamped >= 0;
+  return (
+    <div className="space-y-1.5">
+      <div className="relative h-2.5 rounded-full overflow-hidden bg-muted flex">
+        <div className="flex-1 flex justify-end pr-px">
+          {!isPositive && (
+            <div className="h-full rounded-l-full" style={{ width: `${pct}%`, backgroundColor: "#FF333A" }} />
+          )}
+        </div>
+        <div className="w-px bg-border/80 flex-shrink-0" />
+        <div className="flex-1 flex justify-start pl-px">
+          {isPositive && (
+            <div className="h-full rounded-r-full" style={{ width: `${pct}%`, backgroundColor: "#00C853" }} />
+          )}
+        </div>
+      </div>
+      <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
+        <span>−100 Bearish</span>
+        <span className="font-bold text-xs" style={{ color }}>{clamped > 0 ? "+" : ""}{clamped}</span>
+        <span>Bullish +100</span>
+      </div>
+    </div>
+  );
+}
+
+function ProminentDisclaimer() {
+  return (
+    <div className="flex items-start gap-4 p-5 rounded-2xl border border-amber-500/30 bg-amber-500/5">
+      <ShieldAlert className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
+      <div className="space-y-1.5">
+        <p className="text-sm font-semibold text-amber-400 tracking-tight">
+          For Informational Purposes Only — Not Financial Advice
+        </p>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          The <strong className="text-foreground">Technical Signal Score</strong> is computed deterministically
+          from standard financial formulas (Wilder RSI, SMA-seeded EMA/MACD, Bollinger Bands, moving average
+          alignment). The <strong className="text-foreground">AI Commentary</strong> is qualitative narrative
+          from a large language model — not a forecast.{" "}
+          <strong className="text-foreground">Neither constitutes investment advice or a trading recommendation.</strong>{" "}
+          Past indicator readings do not guarantee future price movements. Options trading involves substantial
+          risk of loss and is not suitable for all investors. Consult a licensed financial advisor before
+          making any investment decision.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function OptionsStrategyPanel({ symbol }: { symbol: string }) {
   const [amount, setAmount] = useState("");
   const [strategy, setStrategy] = useState<any>(null);
@@ -348,6 +401,10 @@ export default function AIAnalysisTab({ symbol }: Props) {
   const tech = analysis.technicalIndicators;
   const opts = analysis.optionsSnapshot;
 
+  const sig = analysis.signalScore;
+  const signalCfg = DIRECTION_CONFIG[sig.direction as keyof typeof DIRECTION_CONFIG] ?? DIRECTION_CONFIG.neutral;
+  const SignalIcon = signalCfg.icon;
+
   const trendCfg = DIRECTION_CONFIG[trend.direction as keyof typeof DIRECTION_CONFIG] ?? DIRECTION_CONFIG.neutral;
   const TrendIcon = trendCfg.icon;
 
@@ -365,48 +422,95 @@ export default function AIAnalysisTab({ symbol }: Props) {
 
   return (
     <div className="space-y-6">
+      {/* ── Always-visible compliance disclaimer ─────────────── */}
+      <ProminentDisclaimer />
+
       <DataQualityBanner dataQuality={analysis.dataQuality} />
 
-      {/* ── Trend Prediction ────────────────────────────────────── */}
-      <div className={cn("bg-card border rounded-2xl p-6 md:p-8 shadow-sm", trendCfg.glow, trendCfg.bg.split(" ")[1])}>
+      {/* ── Technical Signal Score (formula-based) ───────────── */}
+      <div className={cn("bg-card border rounded-2xl p-6 md:p-8 shadow-sm", signalCfg.glow, signalCfg.bg.split(" ")[1])}>
         <div className="flex items-center gap-2 mb-6">
-          <Brain className="w-5 h-5 text-primary" />
-          <h2 className="text-xl font-display font-semibold">Trend Prediction</h2>
+          <Target className="w-5 h-5 text-primary" />
+          <h2 className="text-xl font-display font-semibold">Technical Signal Score</h2>
+          <span className="ml-1 text-[10px] font-bold uppercase tracking-wider text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-full">
+            Formula-Based
+          </span>
           <span className="ml-auto text-xs text-muted-foreground">
             {new Date(analysis.generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </span>
         </div>
 
         <div className="flex flex-col md:flex-row gap-8">
-          {/* Direction badge */}
-          <div className={cn("flex flex-col items-center justify-center rounded-2xl border p-6 md:p-8 min-w-[160px]", trendCfg.bg)}>
-            <TrendIcon className={cn("w-10 h-10 mb-3", trendCfg.color)} />
-            <span className={cn("text-2xl font-display font-bold", trendCfg.color)}>
-              {trendCfg.label}
-            </span>
-            <span className="text-xs text-muted-foreground mt-1">Overall Trend</span>
+          <div className={cn("flex flex-col items-center justify-center rounded-2xl border p-6 md:p-8 min-w-[160px]", signalCfg.bg)}>
+            <SignalIcon className={cn("w-10 h-10 mb-3", signalCfg.color)} />
+            <span className={cn("text-2xl font-display font-bold", signalCfg.color)}>{signalCfg.label}</span>
+            <span className="text-xs text-muted-foreground mt-1">Signal Direction</span>
+          </div>
+
+          <div className="flex-1 space-y-5">
+            <div>
+              <div className="flex justify-between text-xs text-muted-foreground mb-2">
+                <span className="font-semibold uppercase tracking-wider">Weighted Signal Score</span>
+                <span>{sig.bullishCount} bullish · {sig.bearishCount} bearish · {sig.neutralCount} neutral</span>
+              </div>
+              <SignalBar score={sig.score} />
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Signal Breakdown</h4>
+              <div className="space-y-1.5">
+                {sig.signals.map((s, i) => {
+                  const sc = DIRECTION_CONFIG[s.signal as keyof typeof DIRECTION_CONFIG] ?? DIRECTION_CONFIG.neutral;
+                  return (
+                    <div key={i} className="flex items-center gap-3 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs">
+                      <span className={cn("font-bold px-1.5 py-0.5 rounded border flex-shrink-0 text-[10px]", sc.bg, sc.color)}>
+                        {s.signal === "bullish" ? "↑ BUL" : s.signal === "bearish" ? "↓ BEA" : "– NEU"}
+                      </span>
+                      <span className="font-semibold text-foreground flex-shrink-0 w-28">{s.name}</span>
+                      <span className="font-mono text-muted-foreground flex-shrink-0">{s.value}</span>
+                      <span className="text-muted-foreground ml-auto text-right hidden md:block leading-snug max-w-[40%]">{s.note}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── AI Qualitative Commentary (LLM) ──────────────────── */}
+      <div className="bg-card border border-card-border rounded-2xl p-6 md:p-8 shadow-sm">
+        <div className="flex items-center gap-2 mb-6">
+          <Brain className="w-5 h-5 text-primary" />
+          <h2 className="text-xl font-display font-semibold">AI Qualitative Commentary</h2>
+          <span className="ml-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted border border-border px-2 py-0.5 rounded-full">
+            AI-Generated
+          </span>
+        </div>
+
+        <div className="flex flex-col md:flex-row gap-8">
+          <div className={cn("flex flex-col items-center justify-center rounded-2xl border p-5 min-w-[140px] opacity-80", trendCfg.bg)}>
+            <TrendIcon className={cn("w-8 h-8 mb-2", trendCfg.color)} />
+            <span className={cn("text-lg font-display font-bold", trendCfg.color)}>{trendCfg.label}</span>
+            <span className="text-[10px] text-muted-foreground mt-1 text-center leading-tight">AI Assessment<br/>(not a signal)</span>
           </div>
 
           <div className="flex-1 space-y-4">
-            {/* Confidence */}
             <div>
               <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
-                <span className="font-semibold uppercase tracking-wider">AI Confidence</span>
+                <span className="font-semibold uppercase tracking-wider">AI Conviction</span>
+                <span className="italic">LLM self-assessment — not a probability</span>
               </div>
               <ConfidenceBar value={trend.confidence} />
             </div>
-
-            {/* Summary */}
             <p className="text-base font-semibold leading-snug">{trend.summary}</p>
             <p className="text-sm text-muted-foreground leading-relaxed">{trend.reasoning}</p>
-
-            {/* Price Targets */}
             {trend.priceTargets && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2">
-                <StatPill label="Support" value={trend.priceTargets.support ? `$${trend.priceTargets.support.toFixed(2)}` : null} highlight="up" />
-                <StatPill label="Resistance" value={trend.priceTargets.resistance ? `$${trend.priceTargets.resistance.toFixed(2)}` : null} highlight="down" />
-                <StatPill label="1W Target" value={trend.priceTargets.oneWeek ? `$${trend.priceTargets.oneWeek.toFixed(2)}` : null} />
-                <StatPill label="1M Target" value={trend.priceTargets.oneMonth ? `$${trend.priceTargets.oneMonth.toFixed(2)}` : null} />
+                <StatPill label="Support" value={trend.priceTargets.support ? `${trend.priceTargets.support.toFixed(2)}` : null} highlight="up" />
+                <StatPill label="Resistance" value={trend.priceTargets.resistance ? `${trend.priceTargets.resistance.toFixed(2)}` : null} highlight="down" />
+                <StatPill label="1W Target" value={trend.priceTargets.oneWeek ? `${trend.priceTargets.oneWeek.toFixed(2)}` : null} />
+                <StatPill label="1M Target" value={trend.priceTargets.oneMonth ? `${trend.priceTargets.oneMonth.toFixed(2)}` : null} />
               </div>
             )}
           </div>
@@ -560,9 +664,8 @@ export default function AIAnalysisTab({ symbol }: Props) {
       {/* ── Options Strategy Generator ───────────────────────────── */}
       <OptionsStrategyPanel symbol={symbol} />
 
-      {/* Disclaimer */}
-      <p className="text-xs text-muted-foreground text-center pb-4">
-        ⚠ AI-generated analysis for informational purposes only. Not financial advice. Options trading involves significant risk of loss.
+      <p className="text-xs text-muted-foreground text-center pb-4 opacity-60">
+        All analysis is for informational purposes only. See the disclosure above.
       </p>
     </div>
   );

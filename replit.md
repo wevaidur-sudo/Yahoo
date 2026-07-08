@@ -1,6 +1,6 @@
-# [Project name]
+# FinanceScope
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A market intelligence app that lets users search and browse real-time stock, crypto, ETF, and futures data from Yahoo Finance.
 
 ## Run & Operate
 

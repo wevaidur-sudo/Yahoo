@@ -2,19 +2,11 @@ import { useGetTrending, getGetTrendingQueryKey } from "@workspace/api-client-re
 import { Link } from "wouter";
 import { TrendingUp, TrendingDown, Activity } from "lucide-react";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
-import { useEffect, useState } from "react";
 
 export default function Home() {
-  const { data: trending, isLoading, isError, dataUpdatedAt } = useGetTrending({
+  const { data: trending, isLoading, isError } = useGetTrending({
     query: { queryKey: getGetTrendingQueryKey(), refetchInterval: 1_000 }
   });
-
-  const [secsSinceUpdate, setSecsSinceUpdate] = useState(0);
-  useEffect(() => {
-    setSecsSinceUpdate(0);
-    const id = setInterval(() => setSecsSinceUpdate(s => s + 1), 1000);
-    return () => clearInterval(id);
-  }, [dataUpdatedAt]);
 
   return (
     <div className="flex flex-col gap-14 max-w-5xl mx-auto py-8">
@@ -40,7 +32,7 @@ export default function Home() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00C853] opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00C853]" />
               </span>
-              Live · {secsSinceUpdate}s ago
+              Live
             </span>
           )}
         </div>

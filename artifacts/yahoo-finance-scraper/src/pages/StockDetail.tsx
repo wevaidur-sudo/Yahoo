@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo } from "react";
 import { useParams } from "wouter";
 import { 
   useGetQuote, getGetQuoteQueryKey,
@@ -30,7 +30,7 @@ export default function StockDetail() {
   
   const [period, setPeriod] = useState<HistoryPeriod>('1mo');
 
-  const { data: quote, isLoading: isQuoteLoading, dataUpdatedAt: quoteUpdatedAt } = useGetQuote(symbol, { 
+  const { data: quote, isLoading: isQuoteLoading } = useGetQuote(symbol, { 
     query: { enabled: !!symbol, queryKey: getGetQuoteQueryKey(symbol), refetchInterval: 1_000 } 
   });
   
@@ -68,17 +68,6 @@ export default function StockDetail() {
     return last >= first ? "#00C853" : "#FF333A";
   }, [chartData]);
 
-  // Track seconds since last quote update
-  const [secsSinceUpdate, setSecsSinceUpdate] = useState(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => {
-    setSecsSinceUpdate(0);
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(() => {
-      setSecsSinceUpdate(s => s + 1);
-    }, 1000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [quoteUpdatedAt]);
 
   if (!symbol) return null;
 
@@ -109,7 +98,7 @@ export default function StockDetail() {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00C853] opacity-75" />
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00C853]" />
                 </span>
-                Live · updated {secsSinceUpdate}s ago
+                Live
               </span>
             </div>
             <div className="flex items-end gap-5">

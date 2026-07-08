@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 export default function Home() {
   const { data: trending, isLoading, isError, dataUpdatedAt } = useGetTrending({
-    query: { queryKey: getGetTrendingQueryKey(), refetchInterval: 60_000 }
+    query: { queryKey: getGetTrendingQueryKey(), refetchInterval: 1_000 }
   });
 
   const [secsSinceUpdate, setSecsSinceUpdate] = useState(0);

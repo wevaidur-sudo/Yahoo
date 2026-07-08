@@ -31,7 +31,7 @@ export default function StockDetail() {
   const [period, setPeriod] = useState<HistoryPeriod>('1mo');
 
   const { data: quote, isLoading: isQuoteLoading, dataUpdatedAt: quoteUpdatedAt } = useGetQuote(symbol, { 
-    query: { enabled: !!symbol, queryKey: getGetQuoteQueryKey(symbol), refetchInterval: 30_000 } 
+    query: { enabled: !!symbol, queryKey: getGetQuoteQueryKey(symbol), refetchInterval: 1_000 } 
   });
   
   const { data: history, isLoading: isHistoryLoading } = useGetPriceHistory(symbol, period, { 

@@ -97,6 +97,12 @@ router.get("/finance/quote/:symbol", async (req, res): Promise<void> => {
       currency: q.currency ?? null,
       exchange: q.fullExchangeName ?? q.exchange ?? null,
       marketState: q.marketState ?? null,
+      postMarketPrice: q.postMarketPrice ?? null,
+      postMarketChange: q.postMarketChange ?? null,
+      postMarketChangePercent: q.postMarketChangePercent ?? null,
+      preMarketPrice: q.preMarketPrice ?? null,
+      preMarketChange: q.preMarketChange ?? null,
+      preMarketChangePercent: q.preMarketChangePercent ?? null,
     };
 
     res.json(GetQuoteResponse.parse(data));

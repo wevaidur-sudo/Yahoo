@@ -60,7 +60,13 @@ export const GetQuoteResponse = zod.object({
   "fiftyTwoWeekLow": zod.number().nullish(),
   "currency": zod.string().nullish(),
   "exchange": zod.string().nullish(),
-  "marketState": zod.string().nullish()
+  "marketState": zod.string().nullish(),
+  "postMarketPrice": zod.number().nullish(),
+  "postMarketChange": zod.number().nullish(),
+  "postMarketChangePercent": zod.number().nullish(),
+  "preMarketPrice": zod.number().nullish(),
+  "preMarketChange": zod.number().nullish(),
+  "preMarketChangePercent": zod.number().nullish()
 })
 
 

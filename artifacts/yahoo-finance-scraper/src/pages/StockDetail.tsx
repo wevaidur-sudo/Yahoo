@@ -51,6 +51,29 @@ export default function StockDetail() {
   const isUp = quote ? (quote.changePercent || 0) >= 0 : true;
   const quoteColorClass = isUp ? "text-[#00C853]" : "text-[#FF333A]";
 
+  const marketStateLabel = (state: string | null | undefined) => {
+    switch (state) {
+      case "PRE":
+      case "PREPRE":
+        return "Pre-Market";
+      case "POST":
+      case "POSTPOST":
+        return "After Hours";
+      case "REGULAR":
+        return "Market Open";
+      case "CLOSED":
+        return "Market Closed";
+      default:
+        return state ?? "Unknown";
+    }
+  };
+
+  const extendedPrice = quote?.marketState === "PRE" || quote?.marketState === "PREPRE"
+    ? { price: quote.preMarketPrice, change: quote.preMarketChange, pct: quote.preMarketChangePercent, label: "Pre-Market" }
+    : quote?.marketState === "POST" || quote?.marketState === "POSTPOST"
+    ? { price: quote.postMarketPrice, change: quote.postMarketChange, pct: quote.postMarketChangePercent, label: "After Hours" }
+    : null;
+
   // Chart data processing
   const chartData = useMemo(() => {
     if (!history) return [];
@@ -93,7 +116,7 @@ export default function StockDetail() {
               <span>•</span>
               <span className="flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5" />
-                {quote.marketState}
+                {marketStateLabel(quote.marketState)}
               </span>
               <span>•</span>
               <span className="flex items-center gap-1.5 text-[#00C853]">
@@ -114,6 +137,27 @@ export default function StockDetail() {
                 <span>({formatPercent(quote.changePercent)})</span>
               </div>
             </div>
+            {extendedPrice && extendedPrice.price != null && (
+              <div className="flex items-center gap-3 mt-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground bg-muted px-2 py-0.5 rounded border border-border">
+                  {extendedPrice.label}
+                </span>
+                <span className="font-mono text-lg font-medium text-foreground">
+                  {formatCurrency(extendedPrice.price, quote.currency || "USD")}
+                </span>
+                {extendedPrice.change != null && (
+                  <span className={cn(
+                    "font-mono text-sm font-medium",
+                    (extendedPrice.change ?? 0) >= 0 ? "text-[#00C853]" : "text-[#FF333A]"
+                  )}>
+                    {extendedPrice.change > 0 ? "+" : ""}{extendedPrice.change.toFixed(2)}
+                    {extendedPrice.pct != null && (
+                      <span className="ml-1">({formatPercent(extendedPrice.pct)})</span>
+                    )}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-lg">

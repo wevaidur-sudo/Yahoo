@@ -330,6 +330,18 @@ components:
           type: ["string", "null"]
         marketState:
           type: ["string", "null"]
+        postMarketPrice:
+          type: ["number", "null"]
+        postMarketChange:
+          type: ["number", "null"]
+        postMarketChangePercent:
+          type: ["number", "null"]
+        preMarketPrice:
+          type: ["number", "null"]
+        preMarketChange:
+          type: ["number", "null"]
+        preMarketChangePercent:
+          type: ["number", "null"]
       required:
         - symbol
         - name

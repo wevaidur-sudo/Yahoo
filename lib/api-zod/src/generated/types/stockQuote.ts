@@ -43,4 +43,16 @@ export interface StockQuote {
   exchange?: string | null;
   /** @nullable */
   marketState?: string | null;
+  /** @nullable */
+  postMarketPrice?: number | null;
+  /** @nullable */
+  postMarketChange?: number | null;
+  /** @nullable */
+  postMarketChangePercent?: number | null;
+  /** @nullable */
+  preMarketPrice?: number | null;
+  /** @nullable */
+  preMarketChange?: number | null;
+  /** @nullable */
+  preMarketChangePercent?: number | null;
 }

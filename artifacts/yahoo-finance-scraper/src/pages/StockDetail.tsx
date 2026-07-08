@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useParams } from "wouter";
 import { 
   useGetQuote, getGetQuoteQueryKey,
@@ -30,8 +30,8 @@ export default function StockDetail() {
   
   const [period, setPeriod] = useState<HistoryPeriod>('1mo');
 
-  const { data: quote, isLoading: isQuoteLoading } = useGetQuote(symbol, { 
-    query: { enabled: !!symbol, queryKey: getGetQuoteQueryKey(symbol) } 
+  const { data: quote, isLoading: isQuoteLoading, dataUpdatedAt: quoteUpdatedAt } = useGetQuote(symbol, { 
+    query: { enabled: !!symbol, queryKey: getGetQuoteQueryKey(symbol), refetchInterval: 30_000 } 
   });
   
   const { data: history, isLoading: isHistoryLoading } = useGetPriceHistory(symbol, period, { 
@@ -68,6 +68,18 @@ export default function StockDetail() {
     return last >= first ? "#00C853" : "#FF333A";
   }, [chartData]);
 
+  // Track seconds since last quote update
+  const [secsSinceUpdate, setSecsSinceUpdate] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    setSecsSinceUpdate(0);
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(() => {
+      setSecsSinceUpdate(s => s + 1);
+    }, 1000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [quoteUpdatedAt]);
+
   if (!symbol) return null;
 
   return (
@@ -90,6 +102,14 @@ export default function StockDetail() {
               <span className="flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5" />
                 {quote.marketState}
+              </span>
+              <span>•</span>
+              <span className="flex items-center gap-1.5 text-[#00C853]">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00C853] opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00C853]" />
+                </span>
+                Live · updated {secsSinceUpdate}s ago
               </span>
             </div>
             <div className="flex items-end gap-5">

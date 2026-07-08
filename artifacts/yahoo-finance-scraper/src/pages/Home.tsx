@@ -2,11 +2,19 @@ import { useGetTrending, getGetTrendingQueryKey } from "@workspace/api-client-re
 import { Link } from "wouter";
 import { TrendingUp, TrendingDown, Activity } from "lucide-react";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
+import { useEffect, useState } from "react";
 
 export default function Home() {
-  const { data: trending, isLoading, isError } = useGetTrending({
-    query: { queryKey: getGetTrendingQueryKey() }
+  const { data: trending, isLoading, isError, dataUpdatedAt } = useGetTrending({
+    query: { queryKey: getGetTrendingQueryKey(), refetchInterval: 60_000 }
   });
+
+  const [secsSinceUpdate, setSecsSinceUpdate] = useState(0);
+  useEffect(() => {
+    setSecsSinceUpdate(0);
+    const id = setInterval(() => setSecsSinceUpdate(s => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [dataUpdatedAt]);
 
   return (
     <div className="flex flex-col gap-14 max-w-5xl mx-auto py-8">
@@ -21,9 +29,20 @@ export default function Home() {
       </section>
 
       <section className="space-y-6">
-        <div className="flex items-center gap-2 border-b border-border/50 pb-4">
-          <Activity className="w-5 h-5 text-primary" />
-          <h2 className="text-xl font-display font-semibold">Trending Tickers</h2>
+        <div className="flex items-center justify-between border-b border-border/50 pb-4">
+          <div className="flex items-center gap-2">
+            <Activity className="w-5 h-5 text-primary" />
+            <h2 className="text-xl font-display font-semibold">Trending Tickers</h2>
+          </div>
+          {!isLoading && !isError && (
+            <span className="flex items-center gap-1.5 text-xs text-[#00C853] font-medium">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00C853] opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00C853]" />
+              </span>
+              Live · {secsSinceUpdate}s ago
+            </span>
+          )}
         </div>
 
         {isLoading ? (

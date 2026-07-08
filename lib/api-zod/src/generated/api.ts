@@ -206,14 +206,28 @@ export const GetStockAnalysisResponse = zod.object({
   "strike": zod.number(),
   "expiry": zod.string(),
   "premium": zod.number().nullish(),
-  "rationale": zod.string()
+  "rationale": zod.string(),
+  "impliedVolatility": zod.number().nullish(),
+  "delta": zod.number().nullish(),
+  "theoreticalPrice": zod.number().nullish(),
+  "probabilityITM": zod.number().nullish()
 }).optional(),
   "topPutPick": zod.object({
   "strike": zod.number(),
   "expiry": zod.string(),
   "premium": zod.number().nullish(),
-  "rationale": zod.string()
+  "rationale": zod.string(),
+  "impliedVolatility": zod.number().nullish(),
+  "delta": zod.number().nullish(),
+  "theoreticalPrice": zod.number().nullish(),
+  "probabilityITM": zod.number().nullish()
 }).optional()
+}).optional(),
+  "dataQuality": zod.object({
+  "quoteAgeSeconds": zod.number().nullish(),
+  "quoteStale": zod.boolean(),
+  "liquidityWarnings": zod.array(zod.string()),
+  "riskFreeRate": zod.number().nullish()
 }).optional()
 })
 
@@ -240,17 +254,28 @@ export const GetOptionsStrategyResponse = zod.object({
   "strike": zod.number().nullish(),
   "expiry": zod.string().nullish(),
   "premium": zod.number().nullish(),
-  "contracts": zod.number()
+  "contracts": zod.number(),
+  "impliedVolatility": zod.number().nullish(),
+  "delta": zod.number().nullish(),
+  "theoreticalPrice": zod.number().nullish()
 })),
   "totalCost": zod.number().nullish(),
   "maxProfit": zod.string(),
   "maxLoss": zod.string(),
   "breakeven": zod.string(),
+  "breakevens": zod.array(zod.number()).optional(),
   "probability": zod.number(),
+  "probabilityMethod": zod.string().optional(),
   "riskLevel": zod.enum(['low', 'medium', 'high']),
   "reasoning": zod.string(),
   "entryTiming": zod.string(),
-  "exitStrategy": zod.string()
+  "exitStrategy": zod.string(),
+  "dataQuality": zod.object({
+  "quoteAgeSeconds": zod.number().nullish(),
+  "quoteStale": zod.boolean(),
+  "liquidityWarnings": zod.array(zod.string()),
+  "riskFreeRate": zod.number().nullish()
+}).optional()
 })
 
 

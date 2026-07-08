@@ -254,6 +254,23 @@ export interface OptionPick {
   /** @nullable */
   premium?: number | null;
   rationale: string;
+  /** @nullable */
+  impliedVolatility?: number | null;
+  /** @nullable */
+  delta?: number | null;
+  /** @nullable */
+  theoreticalPrice?: number | null;
+  /** @nullable */
+  probabilityITM?: number | null;
+}
+
+export interface DataQuality {
+  /** @nullable */
+  quoteAgeSeconds?: number | null;
+  quoteStale: boolean;
+  liquidityWarnings: string[];
+  /** @nullable */
+  riskFreeRate?: number | null;
 }
 
 export type OptionsSnapshotSentiment = typeof OptionsSnapshotSentiment[keyof typeof OptionsSnapshotSentiment];
@@ -281,6 +298,7 @@ export interface StockAnalysis {
   intraday: IntradayAnalysis;
   technicalIndicators: TechnicalIndicators;
   optionsSnapshot?: OptionsSnapshot;
+  dataQuality?: DataQuality;
 }
 
 export type StrategyLegType = typeof StrategyLegType[keyof typeof StrategyLegType];
@@ -310,6 +328,12 @@ export interface StrategyLeg {
   /** @nullable */
   premium?: number | null;
   contracts: number;
+  /** @nullable */
+  impliedVolatility?: number | null;
+  /** @nullable */
+  delta?: number | null;
+  /** @nullable */
+  theoreticalPrice?: number | null;
 }
 
 export interface OptionsStrategyRequest {
@@ -346,11 +370,14 @@ export interface OptionsStrategy {
   maxProfit: string;
   maxLoss: string;
   breakeven: string;
+  breakevens?: number[];
   probability: number;
+  probabilityMethod?: string;
   riskLevel: OptionsStrategyRiskLevel;
   reasoning: string;
   entryTiming: string;
   exitStrategy: string;
+  dataQuality?: DataQuality;
 }
 
 export type SearchSymbolsParams = {

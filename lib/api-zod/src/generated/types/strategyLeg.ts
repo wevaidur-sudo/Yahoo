@@ -18,4 +18,10 @@ export interface StrategyLeg {
   /** @nullable */
   premium?: number | null;
   contracts: number;
+  /** @nullable */
+  impliedVolatility?: number | null;
+  /** @nullable */
+  delta?: number | null;
+  /** @nullable */
+  theoreticalPrice?: number | null;
 }

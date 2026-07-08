@@ -554,10 +554,35 @@ components:
           type: ["number", "null"]
         rationale:
           type: string
+        impliedVolatility:
+          type: ["number", "null"]
+        delta:
+          type: ["number", "null"]
+        theoreticalPrice:
+          type: ["number", "null"]
+        probabilityITM:
+          type: ["number", "null"]
       required:
         - strike
         - expiry
         - rationale
+
+    DataQuality:
+      type: object
+      properties:
+        quoteAgeSeconds:
+          type: ["number", "null"]
+        quoteStale:
+          type: boolean
+        liquidityWarnings:
+          type: array
+          items:
+            type: string
+        riskFreeRate:
+          type: ["number", "null"]
+      required:
+        - quoteStale
+        - liquidityWarnings
 
     OptionsSnapshot:
       type: object
@@ -592,6 +617,8 @@ components:
           $ref: "#/components/schemas/TechnicalIndicators"
         optionsSnapshot:
           $ref: "#/components/schemas/OptionsSnapshot"
+        dataQuality:
+          $ref: "#/components/schemas/DataQuality"
       required:
         - symbol
         - generatedAt
@@ -616,6 +643,12 @@ components:
           type: ["number", "null"]
         contracts:
           type: number
+        impliedVolatility:
+          type: ["number", "null"]
+        delta:
+          type: ["number", "null"]
+        theoreticalPrice:
+          type: ["number", "null"]
       required:
         - type
         - action
@@ -653,8 +686,14 @@ components:
           type: string
         breakeven:
           type: string
+        breakevens:
+          type: array
+          items:
+            type: number
         probability:
           type: number
+        probabilityMethod:
+          type: string
         riskLevel:
           type: string
           enum: [low, medium, high]
@@ -664,6 +703,8 @@ components:
           type: string
         exitStrategy:
           type: string
+        dataQuality:
+          $ref: "#/components/schemas/DataQuality"
       required:
         - symbol
         - investmentAmount

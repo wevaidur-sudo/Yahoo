@@ -17,6 +17,8 @@ import {
   AlertTriangle,
   DollarSign,
   Loader2,
+  ShieldAlert,
+  Calculator,
 } from "lucide-react";
 
 interface Props {
@@ -66,6 +68,38 @@ function StatPill({ label, value, highlight }: { label: string; value: string | 
       <span className={cn("font-mono text-sm font-semibold", colorClass)}>
         {value ?? "—"}
       </span>
+    </div>
+  );
+}
+
+function DataQualityBanner({ dataQuality }: { dataQuality: any }) {
+  if (!dataQuality) return null;
+  const hasIssues = dataQuality.quoteStale || (dataQuality.liquidityWarnings?.length ?? 0) > 0;
+  if (!hasIssues) return null;
+  return (
+    <div className="flex items-start gap-3 p-4 rounded-xl bg-yellow-400/5 border border-yellow-400/20">
+      <ShieldAlert className="w-5 h-5 text-yellow-400 mt-0.5 flex-shrink-0" />
+      <div className="space-y-1 text-sm">
+        {dataQuality.quoteStale && (
+          <p className="text-yellow-400 font-medium">
+            Quote data is {Math.round((dataQuality.quoteAgeSeconds ?? 0) / 60)} min old — treat prices as delayed.
+          </p>
+        )}
+        {dataQuality.liquidityWarnings?.map((w: string, i: number) => (
+          <p key={i} className="text-muted-foreground">{w}</p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GreeksRow({ iv, delta, theo }: { iv?: number | null; delta?: number | null; theo?: number | null }) {
+  if (iv == null && delta == null && theo == null) return null;
+  return (
+    <div className="flex flex-wrap gap-3 text-xs font-mono text-muted-foreground pt-1">
+      {iv != null && <span>IV <b className="text-foreground">{iv}%</b></span>}
+      {delta != null && <span>Δ <b className="text-foreground">{delta}</b></span>}
+      {theo != null && <span>Theo. Value <b className="text-foreground">${theo}</b></span>}
     </div>
   );
 }
@@ -189,9 +223,11 @@ function OptionsStrategyPanel({ symbol }: { symbol: string }) {
             </div>
           </div>
 
+          <DataQualityBanner dataQuality={strategy.dataQuality} />
+
           {/* P&L Summary */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatPill label="Total Cost" value={strategy.totalCost ? `$${strategy.totalCost.toLocaleString()}` : "N/A"} />
+            <StatPill label="Total Cost" value={strategy.totalCost ? `${strategy.totalCost.toLocaleString()}` : "N/A"} />
             <StatPill label="Max Profit" value={strategy.maxProfit} highlight="up" />
             <StatPill label="Max Loss" value={strategy.maxLoss} highlight="down" />
             <StatPill label="Breakeven" value={strategy.breakeven} />
@@ -203,26 +239,39 @@ function OptionsStrategyPanel({ symbol }: { symbol: string }) {
               <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Strategy Legs</h5>
               <div className="space-y-2">
                 {strategy.legs.map((leg: any, i: number) => (
-                  <div key={i} className="flex items-center gap-3 bg-background border border-border rounded-lg px-4 py-2.5">
-                    <span className={cn(
-                      "text-xs font-bold px-2 py-0.5 rounded",
-                      leg.action === "buy" ? "bg-[#00C853]/10 text-[#00C853]" : "bg-[#FF333A]/10 text-[#FF333A]"
-                    )}>
-                      {leg.action?.toUpperCase()}
-                    </span>
-                    <span className="font-mono text-sm font-semibold">
-                      {leg.contracts}x {leg.type?.toUpperCase()}
-                      {leg.strike ? ` $${leg.strike}` : ""}
-                    </span>
-                    {leg.expiry && (
-                      <span className="text-xs text-muted-foreground ml-auto">exp {leg.expiry}</span>
-                    )}
-                    {leg.premium != null && (
-                      <span className="font-mono text-sm text-muted-foreground">@${leg.premium.toFixed(2)}</span>
-                    )}
+                  <div key={i} className="flex flex-col gap-1 bg-background border border-border rounded-lg px-4 py-2.5">
+                    <div className="flex items-center gap-3">
+                      <span className={cn(
+                        "text-xs font-bold px-2 py-0.5 rounded",
+                        leg.action === "buy" ? "bg-[#00C853]/10 text-[#00C853]" : "bg-[#FF333A]/10 text-[#FF333A]"
+                      )}>
+                        {leg.action?.toUpperCase()}
+                      </span>
+                      <span className="font-mono text-sm font-semibold">
+                        {leg.contracts}x {leg.type?.toUpperCase()}
+                        {leg.strike ? ` ${leg.strike}` : ""}
+                      </span>
+                      {leg.expiry && (
+                        <span className="text-xs text-muted-foreground ml-auto">exp {leg.expiry}</span>
+                      )}
+                      {leg.premium != null && (
+                        <span className="font-mono text-sm text-muted-foreground">@${leg.premium.toFixed(2)}</span>
+                      )}
+                    </div>
+                    <GreeksRow iv={leg.impliedVolatility} delta={leg.delta} theo={leg.theoreticalPrice} />
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Probability methodology */}
+          {strategy.probabilityMethod && (
+            <div className="flex items-start gap-2 text-xs text-muted-foreground bg-background border border-border rounded-lg px-4 py-2.5">
+              <Calculator className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+              <span>
+                <b className="text-foreground">{strategy.probability}% probability of profit</b> — computed via {strategy.probabilityMethod}, not an AI estimate.
+              </span>
             </div>
           )}
 
@@ -316,6 +365,8 @@ export default function AIAnalysisTab({ symbol }: Props) {
 
   return (
     <div className="space-y-6">
+      <DataQualityBanner dataQuality={analysis.dataQuality} />
+
       {/* ── Trend Prediction ────────────────────────────────────── */}
       <div className={cn("bg-card border rounded-2xl p-6 md:p-8 shadow-sm", trendCfg.glow, trendCfg.bg.split(" ")[1])}>
         <div className="flex items-center gap-2 mb-6">
@@ -476,6 +527,10 @@ export default function AIAnalysisTab({ symbol }: Props) {
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">{opts.topCallPick.rationale}</p>
+                <GreeksRow iv={opts.topCallPick.impliedVolatility} delta={opts.topCallPick.delta} theo={opts.topCallPick.theoreticalPrice} />
+                {opts.topCallPick.probabilityITM != null && (
+                  <p className="text-xs text-muted-foreground font-mono">Prob. ITM at expiry: <b className="text-foreground">{opts.topCallPick.probabilityITM}%</b></p>
+                )}
               </div>
             )}
             {opts.topPutPick && (
@@ -492,6 +547,10 @@ export default function AIAnalysisTab({ symbol }: Props) {
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">{opts.topPutPick.rationale}</p>
+                <GreeksRow iv={opts.topPutPick.impliedVolatility} delta={opts.topPutPick.delta} theo={opts.topPutPick.theoreticalPrice} />
+                {opts.topPutPick.probabilityITM != null && (
+                  <p className="text-xs text-muted-foreground font-mono">Prob. ITM at expiry: <b className="text-foreground">{opts.topPutPick.probabilityITM}%</b></p>
+                )}
               </div>
             )}
           </div>

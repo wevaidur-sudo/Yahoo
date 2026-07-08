@@ -7,6 +7,7 @@
  */
 
 export * from './companySummary';
+export * from './dataQuality';
 export * from './errorResponse';
 export * from './healthStatus';
 export * from './historyPeriod';

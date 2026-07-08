@@ -12,4 +12,12 @@ export interface OptionPick {
   /** @nullable */
   premium?: number | null;
   rationale: string;
+  /** @nullable */
+  impliedVolatility?: number | null;
+  /** @nullable */
+  delta?: number | null;
+  /** @nullable */
+  theoreticalPrice?: number | null;
+  /** @nullable */
+  probabilityITM?: number | null;
 }

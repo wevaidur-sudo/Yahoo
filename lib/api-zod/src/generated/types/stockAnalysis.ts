@@ -5,6 +5,7 @@
  * Yahoo Finance Scraper API
  * OpenAPI spec version: 0.1.0
  */
+import type { DataQuality } from './dataQuality';
 import type { IntradayAnalysis } from './intradayAnalysis';
 import type { OptionsSnapshot } from './optionsSnapshot';
 import type { TechnicalIndicators } from './technicalIndicators';
@@ -17,4 +18,5 @@ export interface StockAnalysis {
   intraday: IntradayAnalysis;
   technicalIndicators: TechnicalIndicators;
   optionsSnapshot?: OptionsSnapshot;
+  dataQuality?: DataQuality;
 }

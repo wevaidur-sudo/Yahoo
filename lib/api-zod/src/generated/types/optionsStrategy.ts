@@ -5,6 +5,7 @@
  * Yahoo Finance Scraper API
  * OpenAPI spec version: 0.1.0
  */
+import type { DataQuality } from './dataQuality';
 import type { OptionsStrategyRiskLevel } from './optionsStrategyRiskLevel';
 import type { OptionsStrategyStrategyType } from './optionsStrategyStrategyType';
 import type { StrategyLeg } from './strategyLeg';
@@ -20,9 +21,12 @@ export interface OptionsStrategy {
   maxProfit: string;
   maxLoss: string;
   breakeven: string;
+  breakevens?: number[];
   probability: number;
+  probabilityMethod?: string;
   riskLevel: OptionsStrategyRiskLevel;
   reasoning: string;
   entryTiming: string;
   exitStrategy: string;
+  dataQuality?: DataQuality;
 }

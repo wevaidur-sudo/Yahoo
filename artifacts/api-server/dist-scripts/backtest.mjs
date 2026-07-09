@@ -29371,205 +29371,88 @@ function generateTradeSetup(params) {
   };
 }
 
-// src/lib/data-sources/stooq.ts
-import { createHash } from "node:crypto";
-function solvePoW(c, d) {
-  const target = "0".repeat(d);
-  for (let n = 0; ; n++) {
-    const hex = createHash("sha256").update(`${c}${n}`).digest("hex");
-    if (hex.startsWith(target)) return n;
-  }
+// src/lib/data-sources/eodhd.ts
+var BASE_URL = "https://eodhd.com/api";
+function apiKey() {
+  return process.env.EODHD_API_KEY ?? "demo";
 }
-function parseChallenge(html) {
-  const m = html.match(/const c="([^"]+)",d=(\d+)/);
-  if (!m) return null;
-  return { c: m[1], d: parseInt(m[2], 10) };
-}
-function extractCookies(headers) {
-  const raw = [];
-  if (typeof headers.getSetCookie === "function") {
-    headers.getSetCookie().forEach((v) => raw.push(v.split(";")[0].trim()));
-  } else {
-    const joined = headers.get("set-cookie");
-    if (joined) {
-      joined.split(",").forEach((v) => raw.push(v.split(";")[0].trim()));
-    }
-  }
-  return raw.join("; ");
-}
-function mergeCookies(base, incoming) {
-  const map2 = /* @__PURE__ */ new Map();
-  for (const part of [base, incoming]) {
-    for (const kv of part.split(";").map((s) => s.trim()).filter(Boolean)) {
-      const eq2 = kv.indexOf("=");
-      if (eq2 > 0) map2.set(kv.slice(0, eq2), kv.slice(eq2 + 1));
-    }
-  }
-  return [...map2.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-}
-var cachedCookie = "";
-var cacheExpiry = 0;
-var BASE_URL = "https://stooq.com";
-var VERIFY_PATH = "/__verify";
-var COMMON_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
-  Accept: "text/html,application/xhtml+xml,text/csv,text/plain,*/*",
-  "Accept-Language": "en-US,en;q=0.5"
-};
-async function solveAndVerify(challengeHtml, priorCookies) {
-  const parsed = parseChallenge(challengeHtml);
-  if (!parsed) {
-    console.warn("[stooq] could not parse PoW challenge from response HTML");
-    return null;
-  }
-  const { c, d } = parsed;
-  console.info(`[stooq] solving PoW challenge (difficulty d=${d})\u2026`);
-  const t0 = Date.now();
-  const n = solvePoW(c, d);
-  console.info(`[stooq] PoW solved: n=${n} in ${Date.now() - t0}ms`);
-  const verifyHeaders = {
-    ...COMMON_HEADERS,
-    "Content-Type": "application/x-www-form-urlencoded",
-    Referer: `${BASE_URL}/`,
-    Origin: BASE_URL
-  };
-  if (priorCookies) verifyHeaders["Cookie"] = priorCookies;
-  let verifyResp;
-  try {
-    verifyResp = await fetch(`${BASE_URL}${VERIFY_PATH}`, {
-      method: "POST",
-      headers: verifyHeaders,
-      body: `c=${encodeURIComponent(c)}&n=${n}`,
-      redirect: "manual"
-      // don't follow — we want the Set-Cookie
-    });
-  } catch (err) {
-    console.warn("[stooq] /__verify request failed:", err.message);
-    return null;
-  }
-  const verifyCookies = extractCookies(verifyResp.headers);
-  if (!verifyCookies) {
-    console.warn(`[stooq] /__verify (HTTP ${verifyResp.status}) returned no Set-Cookie header`);
-    return null;
-  }
-  return mergeCookies(priorCookies, verifyCookies);
-}
-async function stooqFetch(url2) {
-  const makeHeaders = (cookie) => ({
-    ...COMMON_HEADERS,
-    ...cookie ? { Cookie: cookie } : {}
-  });
-  let resp = await fetch(url2, {
-    headers: makeHeaders(Date.now() < cacheExpiry ? cachedCookie : ""),
-    signal: AbortSignal.timeout(2e4)
-  });
-  let text2 = await resp.text();
-  if (!resp.ok || text2.trimStart().startsWith("<!")) {
-    const priorCookies = extractCookies(resp.headers);
-    const newCookie = await solveAndVerify(text2, priorCookies);
-    if (!newCookie) {
-      return text2;
-    }
-    resp = await fetch(url2, {
-      headers: makeHeaders(newCookie),
-      signal: AbortSignal.timeout(2e4)
-    });
-    text2 = await resp.text();
-    if (!text2.trimStart().startsWith("<!")) {
-      cachedCookie = newCookie;
-      cacheExpiry = Date.now() + 4 * 60 * 60 * 1e3;
-      console.info("[stooq] session established; cookie cached for 4 h");
-    } else {
-      console.warn("[stooq] still receiving challenge page after verification \u2014 Stooq may have changed its scheme");
-    }
-  }
-  return text2;
-}
-var STOOQ_INTERVAL = {
-  "5m": "5",
+var EODHD_INTERVAL = {
+  "1m": "1m",
+  "5m": "5m",
+  "15m": "15m",
   "1d": "d"
 };
-var INTRADAY_HEADERS = ["date", "time", "open", "high", "low", "close", "volume"];
-var DAILY_HEADERS = ["date", "open", "high", "low", "close", "volume"];
-function toStooqSymbol(symbol2) {
-  return symbol2.includes(".") ? symbol2.toLowerCase() : `${symbol2.toLowerCase()}.us`;
+function toDateStr(d) {
+  return d.toISOString().slice(0, 10);
 }
-function padZ(n) {
-  return String(n).padStart(2, "0");
-}
-function toStooqDate(d) {
-  return `${d.getUTCFullYear()}${padZ(d.getUTCMonth() + 1)}${padZ(d.getUTCDate())}`;
-}
-function stooqBarToUtc(dateStr, timeStr) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const [hh, mm, ss] = (timeStr ?? "00:00:00").split(":").map(Number);
-  const probe = new Date(Date.UTC(y, m - 1, d));
-  const offsetHours = getETOffset(probe);
-  return new Date(Date.UTC(y, m - 1, d, hh + offsetHours, mm, ss ?? 0));
-}
-function isValidCsv(text2, interval2) {
-  const trimmed = text2.trim();
-  if (!trimmed) return false;
-  const firstLine = trimmed.split("\n")[0].toLowerCase().trim();
-  if (firstLine.startsWith("no data")) return false;
-  if (firstLine.startsWith("<!") || firstLine.startsWith("<html")) return false;
-  const expected = interval2 === "1d" ? DAILY_HEADERS : INTRADAY_HEADERS;
-  const cols = firstLine.split(",").map((c) => c.trim());
-  return expected.every((h) => cols.includes(h));
-}
-function parseStooqCsv(csv, interval2) {
-  const lines = csv.trim().split("\n");
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
-  const hasTime = headers.includes("time");
-  const bars = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",");
-    if (cols.length < (hasTime ? 7 : 6)) continue;
-    let colIdx = 0;
-    const dateStr = cols[colIdx++].trim();
-    const timeStr = hasTime ? cols[colIdx++].trim() : "00:00:00";
-    const open = parseFloat(cols[colIdx++]);
-    const high = parseFloat(cols[colIdx++]);
-    const low = parseFloat(cols[colIdx++]);
-    const close = parseFloat(cols[colIdx++]);
-    const volume = parseFloat(cols[colIdx++] ?? "0") || 0;
-    if (!dateStr || isNaN(open) || isNaN(close)) continue;
-    const timestamp2 = interval2 === "1d" ? /* @__PURE__ */ new Date(`${dateStr}T00:00:00.000Z`) : stooqBarToUtc(dateStr, timeStr);
-    bars.push({ timestamp: timestamp2, open, high, low, close, volume });
-  }
-  return bars.reverse();
-}
-var StooqSource = class {
-  name = "stooq";
+var EodhdSource = class {
+  name = "eodhd";
   supports(interval2) {
-    return interval2 in STOOQ_INTERVAL;
+    return interval2 in EODHD_INTERVAL;
   }
+  // No maxLookbackDays — EODHD handles the full window natively.
+  // The "demo" key provides ~1 year of 5m history; paid keys go further.
   async fetchBars(symbol2, interval2, from, to) {
-    const stooqInterval = STOOQ_INTERVAL[interval2];
-    if (!stooqInterval) return [];
-    const s = toStooqSymbol(symbol2);
-    const d1 = toStooqDate(from);
-    const d2 = toStooqDate(to);
-    const url2 = `${BASE_URL}/q/d/l/?s=${encodeURIComponent(s)}&i=${stooqInterval}&d1=${d1}&d2=${d2}`;
-    let text2;
-    try {
-      text2 = await stooqFetch(url2);
-    } catch (err) {
-      throw new Error(`Stooq network error for ${symbol2}: ${err.message}`);
+    const eodInterval = EODHD_INTERVAL[interval2];
+    if (!eodInterval) return [];
+    if (interval2 === "1d") {
+      return this.fetchDaily(symbol2, from, to);
     }
-    if (!isValidCsv(text2, interval2)) {
-      const reason = text2.trim().toLowerCase() === "access denied" ? "IP-blocked by Stooq (cloud/datacenter IPs blocked even after PoW verification)" : "challenge unsolved or no data";
-      console.warn(
-        `[stooq] ${symbol2}/${interval2}: response is not valid CSV (${reason}) \u2014 falling through to next source`
-      );
-      return [];
+    return this.fetchIntraday(symbol2, eodInterval, from, to);
+  }
+  async fetchIntraday(symbol2, interval2, from, to) {
+    const params = new URLSearchParams({
+      api_token: apiKey(),
+      interval: interval2,
+      from: String(Math.floor(from.getTime() / 1e3)),
+      to: String(Math.floor(to.getTime() / 1e3)),
+      fmt: "json"
+    });
+    const url2 = `${BASE_URL}/intraday/${encodeURIComponent(symbol2.toUpperCase())}.US?${params}`;
+    const resp = await fetch(url2, { signal: AbortSignal.timeout(3e4) });
+    if (!resp.ok) {
+      throw new Error(`EODHD intraday HTTP ${resp.status} for ${symbol2}`);
     }
-    const bars = parseStooqCsv(text2, interval2);
-    if (bars.length === 0) {
-      console.warn(`[stooq] ${symbol2}/${interval2}: CSV parsed to 0 bars`);
+    const data = await resp.json();
+    if (!Array.isArray(data)) {
+      const msg = data.message ?? JSON.stringify(data).slice(0, 120);
+      throw new Error(`EODHD intraday error for ${symbol2}: ${msg}`);
     }
-    return bars;
+    return data.map((b) => ({
+      timestamp: new Date(b.timestamp * 1e3),
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      volume: b.volume
+    }));
+  }
+  async fetchDaily(symbol2, from, to) {
+    const params = new URLSearchParams({
+      api_token: apiKey(),
+      from: toDateStr(from),
+      to: toDateStr(to),
+      period: "d",
+      fmt: "json"
+    });
+    const url2 = `${BASE_URL}/eod/${encodeURIComponent(symbol2.toUpperCase())}.US?${params}`;
+    const resp = await fetch(url2, { signal: AbortSignal.timeout(3e4) });
+    if (!resp.ok) {
+      throw new Error(`EODHD daily HTTP ${resp.status} for ${symbol2}`);
+    }
+    const data = await resp.json();
+    if (!Array.isArray(data)) {
+      const msg = data.message ?? JSON.stringify(data).slice(0, 120);
+      throw new Error(`EODHD daily error for ${symbol2}: ${msg}`);
+    }
+    return data.map((b) => ({
+      timestamp: /* @__PURE__ */ new Date(`${b.date}T00:00:00.000Z`),
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      volume: b.volume
+    }));
   }
 };
 
@@ -59786,10 +59669,10 @@ var YahooSource = class {
 };
 
 // src/lib/data-sources/manager.ts
-var stooq = new StooqSource();
+var eodhd = new EodhdSource();
 var yahoo = new YahooSource();
-var INTRADAY_SOURCES = [stooq, yahoo];
-var DAILY_SOURCES = [yahoo, stooq];
+var INTRADAY_SOURCES = [eodhd, yahoo];
+var DAILY_SOURCES = [eodhd, yahoo];
 var DAY_MS = 864e5;
 var dbModule = null;
 async function getDb() {
@@ -60046,9 +59929,9 @@ async function backtestSymbol(symbol2) {
   try {
     [bars5m, dailyBars] = await Promise.all([
       fetchBars2(symbol2, "5m", 365),
-      // Stooq provides ~years; Yahoo fallback covers ~60 days
+      // EODHD: ~1 year of 5m; Yahoo fallback ~60 days
       fetchBars2(symbol2, "1d", 500)
-      // Yahoo/Stooq daily goes back years
+      // EODHD/Yahoo: decades of daily history
     ]);
   } catch (err) {
     console.error(`  [${symbol2}] fetch failed:`, err.message);
@@ -60274,7 +60157,7 @@ Generated: ${(/* @__PURE__ */ new Date()).toISOString()}
 
 ## Methodology
 - Symbols (${SYMBOLS.length}): ${SYMBOLS.join(", ")}
-- Data: Stooq 5m bars (years of history, no pre/post market; Yahoo as fallback ~60 days) + daily bars (~500 days) for PDH/PDL/ATR/avg-volume. Results cached in ohlcv_bars DB table.
+- Data: EODHD 5m bars (~1 year) + daily bars (~500 days) for PDH/PDL/ATR/avg-volume. Yahoo as fallback. Results cached in ohlcv_bars DB table.
 - Decision windows tested per trading day (ET): ${DECISION_TIMES_ET.map((t) => `${Math.floor(t)}:${String(Math.round(t % 1 * 60)).padStart(2, "0")}`).join(", ")}
 - Uses the exact production code path: \`computeIntradayLevels\` \u2192 \`computeIntradaySignals\` \u2192 \`generateTradeSetup\`
 - **Walk-forward split**: first ${Math.round(TRAIN_FRACTION * 100)}% of each symbol's trading days = TRAIN (used only to derive the setup-type quality gate below), last ${Math.round((1 - TRAIN_FRACTION) * 100)}% = TEST (held out, scored with the gate frozen from TRAIN \u2014 this is genuine out-of-sample evidence, not a re-fit)

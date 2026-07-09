@@ -1,10 +1,10 @@
 # Intraday Signal Engine — Backtest Report
 
-Generated: 2026-07-09T19:29:01.495Z
+Generated: 2026-07-09T20:45:50.941Z
 
 ## Methodology
 - Symbols (18): AAPL, MSFT, NVDA, AMZN, TSLA, META, GOOGL, SPY, QQQ, AMD, NFLX, JPM, XOM, UNH, COST, AVGO, CRM, ORCL
-- Data: Stooq 5m bars (years of history, no pre/post market; Yahoo as fallback ~60 days) + daily bars (~500 days) for PDH/PDL/ATR/avg-volume. Results cached in ohlcv_bars DB table.
+- Data: EODHD 5m bars (~1 year) + daily bars (~500 days) for PDH/PDL/ATR/avg-volume. Yahoo as fallback. Results cached in ohlcv_bars DB table.
 - Decision windows tested per trading day (ET): 10:15, 11:00, 13:45
 - Uses the exact production code path: `computeIntradayLevels` → `computeIntradaySignals` → `generateTradeSetup`
 - **Walk-forward split**: first 65% of each symbol's trading days = TRAIN (used only to derive the setup-type quality gate below), last 35% = TEST (held out, scored with the gate frozen from TRAIN — this is genuine out-of-sample evidence, not a re-fit)
@@ -14,63 +14,63 @@ Generated: 2026-07-09T19:29:01.495Z
 ## Setup-Type Quality Gate (derived from TRAIN only, N ≥ 12)
 | Setup Type | N (train) | Win Rate | Avg R | Verdict |
 |---|---|---|---|---|
-| ORB Breakdown | 18 | 38.9% | -0.15R | ⛔ negative edge |
-| ORB Breakout | 16 | 25.0% | -0.46R | ⛔ negative edge |
-| Pre-Market High Breakout | 39 | 41.0% | -0.06R | ⛔ negative edge |
-| Pre-Market Low Breakdown | 19 | 52.6% | -0.00R | ⛔ negative edge |
-| Previous Day High Breakout | 69 | 36.2% | -0.27R | ⛔ negative edge |
-| Previous Day Low Breakdown | 61 | 68.9% | +0.43R | ✅ ALLOWED |
+| ORB Breakdown | 51 | 47.1% | -0.04R | ⛔ negative edge |
+| ORB Breakout | 53 | 47.2% | -0.10R | ⛔ negative edge |
+| Pre-Market High Breakout | 27 | 44.4% | +0.03R | ✅ ALLOWED |
+| Pre-Market Low Breakdown | 10 | 70.0% | +0.16R | ⛔ insufficient data |
+| Previous Day High Breakout | 108 | 45.4% | -0.15R | ⛔ negative edge |
+| Previous Day Low Breakdown | 103 | 69.9% | +0.32R | ✅ ALLOWED |
 
-**Allowed setup types (shipped to production):** Previous Day Low Breakdown
+**Allowed setup types (shipped to production):** Pre-Market High Breakout, Previous Day Low Breakdown
 
 ## TRAIN Results (in-sample — for reference only, not evidence)
-- N=222, win rate 46.8%, avg -0.02R
+- N=352, win rate 53.7%, avg +0.03R
 
 ## TEST Results (held-out — this is the real evidence)
 | | N | Win Rate | Avg R |
 |---|---|---|---|
-| Unfiltered (all setup types) | 111 | 36.9% | -0.07R |
-| **With quality gate applied** | 33 | **30.3%** | **-0.23R** |
+| Unfiltered (all setup types) | 200 | 54.0% | +0.09R |
+| **With quality gate applied** | 67 | **56.7%** | **+0.11R** |
 
 Filtering out setup types that showed negative or unreliable edge on TRAIN, and re-scoring only
-on TEST (data the gate never saw), moved win rate from 36.9% to
-30.3% and average R from -0.07R to -0.23R.
-The gate did NOT clearly improve out-of-sample expectancy — treat the allowlist as provisional, not proven.
+on TEST (data the gate never saw), moved win rate from 54.0% to
+56.7% and average R from 0.09R to 0.11R.
+The gate improved out-of-sample expectancy.
 
 ## Full Breakdown (all trades, both phases combined)
 ### By Setup Type
 | Setup Type | N | Win Rate | Avg R |
 |---|---|---|---|
-| ORB Breakdown | 30 | 33.3% | -0.18R |
-| ORB Breakout | 23 | 30.4% | -0.27R |
-| Pre-Market High Breakout | 50 | 44.0% | +0.01R |
-| Pre-Market Low Breakdown | 32 | 50.0% | +0.19R |
-| Previous Day High Breakout | 103 | 35.9% | -0.26R |
-| Previous Day Low Breakdown | 94 | 55.3% | +0.20R |
-| VWAP Trend Long | 1 | 100.0% | +0.08R |
+| ORB Breakdown | 79 | 43.0% | -0.10R |
+| ORB Breakout | 80 | 53.8% | +0.03R |
+| Pre-Market High Breakout | 36 | 47.2% | +0.13R |
+| Pre-Market Low Breakdown | 17 | 58.8% | +0.45R |
+| Previous Day High Breakout | 178 | 49.4% | -0.08R |
+| Previous Day Low Breakdown | 161 | 65.2% | +0.23R |
+| VWAP Rejection | 1 | 0.0% | -1.00R |
 
 ### By Conviction Bucket
 | Conviction | N | Win Rate | Avg R |
 |---|---|---|---|
-| 25-40 | 10 | 60.0% | +0.52R |
-| 40-60 | 66 | 42.4% | -0.10R |
-| 60-80 | 134 | 42.5% | +0.01R |
-| 80-100 | 123 | 43.9% | -0.10R |
+| 25-40 | 15 | 53.3% | +0.19R |
+| 40-60 | 194 | 57.2% | +0.08R |
+| 60-80 | 252 | 52.4% | +0.07R |
+| 80-100 | 91 | 50.5% | -0.06R |
 
 ### By Bias
 | Bias | N | Win Rate | Avg R |
 |---|---|---|---|
-| long | 177 | 37.9% | -0.18R |
-| short | 156 | 50.0% | +0.12R |
+| long | 294 | 50.3% | -0.02R |
+| short | 258 | 57.8% | +0.14R |
 
 ## Operational Stats
-- Total setups generated: 333
-- Filtered as no-trade (conviction/R:R gates, before the setup-type gate): 1773
-- Fetch/compute errors: 0
+- Total setups generated: 552
+- Filtered as no-trade (conviction/R:R gates, before the setup-type gate): 4074
+- Fetch/compute errors: 12
 
 ## Caveats (read before acting on this)
 This is walk-forward evidence, which is meaningfully stronger than a single in-sample run — but
-the TEST sample (~111 trades) is still modest. Treat the setup-type gate as
+the TEST sample (~200 trades) is still modest. Treat the setup-type gate as
 **provisional and subject to revision** as more data accrues; rerun `pnpm run backtest` monthly
 and update `EMPIRICAL_SETUP_ALLOWLIST` in `intraday-signals.ts` from the new TRAIN verdicts.
 No backtest — however rigorous — is a substitute for paper-trading before risking real capital,

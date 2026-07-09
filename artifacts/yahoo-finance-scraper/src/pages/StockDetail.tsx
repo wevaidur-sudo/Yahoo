@@ -13,7 +13,7 @@ import { TrendingUp, TrendingDown, Clock, Globe, MapPin, Users, Briefcase, Newsp
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer 
 } from "recharts";
-import { format } from "date-fns";
+import { format, formatDistanceToNow, differenceInHours } from "date-fns";
 
 const PERIODS: { label: string; value: HistoryPeriod }[] = [
   { label: '1D', value: '1d' },
@@ -68,11 +68,26 @@ export default function StockDetail() {
     }
   };
 
-  const extendedPrice = quote?.marketState === "PRE" || quote?.marketState === "PREPRE"
-    ? { price: quote.preMarketPrice, change: quote.preMarketChange, pct: quote.preMarketChangePercent, label: "Pre-Market" }
-    : quote?.marketState === "POST" || quote?.marketState === "POSTPOST"
-    ? { price: quote.postMarketPrice, change: quote.postMarketChange, pct: quote.postMarketChangePercent, label: "After Hours" }
-    : null;
+  const extendedPrice = (() => {
+    if (!quote) return null;
+    const { marketState, preMarketPrice, preMarketChange, preMarketChangePercent, postMarketPrice, postMarketChange, postMarketChangePercent } = quote;
+    if (marketState === "PRE" || marketState === "PREPRE") {
+      return { price: preMarketPrice, change: preMarketChange, pct: preMarketChangePercent, label: "Pre-Market" };
+    }
+    if (marketState === "POST" || marketState === "POSTPOST") {
+      return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours" };
+    }
+    // Market is CLOSED but extended-hours data is still available from Yahoo Finance
+    if (marketState === "CLOSED") {
+      if (postMarketPrice != null) {
+        return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours" };
+      }
+      if (preMarketPrice != null) {
+        return { price: preMarketPrice, change: preMarketChange, pct: preMarketChangePercent, label: "Pre-Market" };
+      }
+    }
+    return null;
+  })();
 
   // Chart data processing
   const chartData = useMemo(() => {
@@ -364,7 +379,12 @@ export default function StockDetail() {
                   </div>
                   <div className="flex items-center justify-between text-xs text-muted-foreground font-medium">
                     <span className="bg-background px-2 py-1 rounded border border-border">{item.publisher || "News"}</span>
-                    <span>{item.publishedAt ? format(new Date(item.publishedAt), "MMM d, h:mm a") : ""}</span>
+                    <span>{item.publishedAt ? (() => {
+                      const d = new Date(item.publishedAt);
+                      return differenceInHours(new Date(), d) < 24
+                        ? formatDistanceToNow(d, { addSuffix: true })
+                        : format(d, "MMM d, h:mm a");
+                    })() : ""}</span>
                   </div>
                 </a>
               ))}

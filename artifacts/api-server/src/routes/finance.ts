@@ -226,7 +226,7 @@ router.get("/finance/news/:symbol", async (req, res): Promise<void> => {
       publisher: article.publisher ?? null,
       link: article.link || "#",
       publishedAt: article.providerPublishTime
-        ? new Date(article.providerPublishTime * 1000).toISOString()
+        ? new Date(article.providerPublishTime).toISOString()
         : null,
       thumbnail: article.thumbnail?.resolutions?.[0]?.url ?? null,
       summary: null,

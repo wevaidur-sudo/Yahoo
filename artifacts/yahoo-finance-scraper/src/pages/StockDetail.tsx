@@ -91,13 +91,18 @@ export default function StockDetail() {
     if (marketState === "POST" || marketState === "POSTPOST") {
       return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours", asOf: fmt(postMarketTime) };
     }
-    // PREPRE: before 4 AM ET — show last post-market close as reference if pre-market hasn't printed yet
+    // PREPRE: between 8 PM and 4 AM ET. Yahoo's website shows a continuously
+    // updating "Overnight" price here (from the Blue Ocean ATS venue), but
+    // that feed is not exposed through any public/free Yahoo API endpoint —
+    // only the last official post-market print (ending 8 PM ET) is available
+    // to us, so we show that and label it honestly as a last-known price
+    // rather than implying it's live overnight data.
     if (marketState === "PREPRE") {
       if (preMarketPrice != null) {
-        return { price: preMarketPrice, change: preMarketChange, pct: preMarketChangePercent, label: "Pre-Market", asOf: fmt(preMarketTime) };
+        return { price: preMarketPrice, change: preMarketChange, pct: preMarketChangePercent, label: "Pre-Market", asOf: fmt(preMarketTime), stale: false };
       }
       if (postMarketPrice != null) {
-        return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours", asOf: fmt(postMarketTime) };
+        return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "Last Trade (Overnight)", asOf: fmt(postMarketTime), stale: true };
       }
     }
     // CLOSED: extended-hours data still available from Yahoo
@@ -198,7 +203,10 @@ export default function StockDetail() {
                 </div>
                 {extendedPrice.asOf && (
                   <p className="text-xs text-muted-foreground pl-0.5">
-                    As of {extendedPrice.asOf} · Updates every second
+                    As of {extendedPrice.asOf}
+                    {extendedPrice.stale
+                      ? " · Overnight trading may be active on other venues; live overnight ticks aren't available from our data source"
+                      : " · Updates every second"}
                   </p>
                 )}
               </div>

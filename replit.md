@@ -10,6 +10,8 @@ A market intelligence app that lets users search and browse real-time stock, cry
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
+- Required secret: `GEMINI_API_KEY` — used by the AI analysis route
+- Secret present but not yet wired into code: `TIINGO_API_KEY` — intended for adding delisted-stock data (follow-up feature, not yet implemented)
 
 ## Stack
 

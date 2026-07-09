@@ -8,7 +8,6 @@
 import type { DataQuality } from './dataQuality';
 import type { IntradayAnalysis } from './intradayAnalysis';
 import type { OptionsSnapshot } from './optionsSnapshot';
-import type { QuantScore } from './quantScore';
 import type { SignalScore } from './signalScore';
 import type { TechnicalIndicators } from './technicalIndicators';
 import type { TrendPrediction } from './trendPrediction';
@@ -17,7 +16,6 @@ export interface StockAnalysis {
   symbol: string;
   generatedAt: string;
   signalScore: SignalScore;
-  quantScore?: QuantScore;
   trend: TrendPrediction;
   intraday: IntradayAnalysis;
   technicalIndicators: TechnicalIndicators;

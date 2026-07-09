@@ -29,9 +29,7 @@ export const SearchSymbolsResponseItem = zod.object({
   "name": zod.string(),
   "exchange": zod.string(),
   "type": zod.string(),
-  "score": zod.number().nullish(),
-  "source": zod.enum(['yahoo', 'tiingo']).optional().describe('Which data provider this result came from'),
-  "delisted": zod.boolean().optional().describe('True if the symbol is no longer actively traded (only returned by the Tiingo fallback)')
+  "score": zod.number().nullish()
 })
 export const SearchSymbolsResponse = zod.array(SearchSymbolsResponseItem)
 
@@ -70,9 +68,7 @@ export const GetQuoteResponse = zod.object({
   "preMarketChange": zod.number().nullish(),
   "preMarketChangePercent": zod.number().nullish(),
   "preMarketTime": zod.string().nullish().describe('ISO 8601 timestamp of the last pre-market price update'),
-  "postMarketTime": zod.string().nullish().describe('ISO 8601 timestamp of the last post-market price update'),
-  "source": zod.enum(['yahoo', 'tiingo']).optional().describe('Which data provider this quote came from'),
-  "delisted": zod.boolean().optional().describe('True if the symbol is no longer actively traded (only set by the Tiingo fallback)')
+  "postMarketTime": zod.string().nullish().describe('ISO 8601 timestamp of the last post-market price update')
 })
 
 
@@ -149,46 +145,6 @@ export const GetCompanySummaryResponse = zod.object({
 
 
 /**
- * @summary Look up a symbol via Tiingo (covers tickers no longer listed on Yahoo Finance)
- */
-export const GetDelistedLookupParams = zod.object({
-  "symbol": zod.coerce.string()
-})
-
-export const GetDelistedLookupResponse = zod.object({
-  "symbol": zod.string(),
-  "name": zod.string(),
-  "exchange": zod.string().nullish(),
-  "startDate": zod.string().nullish(),
-  "endDate": zod.string().nullish(),
-  "delisted": zod.boolean()
-}).describe('Metadata for a symbol resolved via the Tiingo delisted-stock fallback')
-
-
-/**
- * @summary Live progress of the background ML retraining job (for UI polling)
- */
-export const GetTrainingStatusResponse = zod.object({
-  "phase": zod.enum(['idle', 'fetching-history', 'fetching-fundamentals', 'building-training-set', 'training-model', 'done', 'error']),
-  "currentSymbol": zod.string().nullable(),
-  "symbolsDone": zod.number(),
-  "symbolsTotal": zod.number(),
-  "currentModelKind": zod.string().nullable(),
-  "currentFold": zod.number().nullable(),
-  "totalFolds": zod.number().nullable(),
-  "message": zod.string(),
-  "startedAt": zod.string().nullable(),
-  "updatedAt": zod.string(),
-  "scheduler": zod.object({
-  "isRunning": zod.boolean(),
-  "lastRunAt": zod.string().nullable(),
-  "nextRunAt": zod.string().nullable(),
-  "lastError": zod.string().nullable()
-})
-}).describe('Live progress snapshot of the background ML retraining pipeline, for UI polling. Process-local — resets to \"idle\" on server restart.\n')
-
-
-/**
  * @summary Get trending tickers
  */
 export const GetTrendingResponseItem = zod.object({
@@ -227,19 +183,6 @@ export const GetStockAnalysisResponse = zod.object({
   "note": zod.string()
 }))
 }).describe('Rules-based signal confluence score computed deterministically from standard financial formulas (Wilder RSI, SMA-seeded EMA, MACD, Bollinger Bands, moving average alignment, volume). Not an AI estimate.\n'),
-  "quantScore": zod.object({
-  "available": zod.boolean(),
-  "overall": zod.number().nullish().describe('1 (bearish) to 10 (bullish) combined score'),
-  "momentum": zod.number().nullish(),
-  "value": zod.number().nullish().describe('Value\/fundamental sub-score. Trained using current fundamentals joined across historical price rows (point-in-time historical fundamentals aren\'t available from this data source) — a known, disclosed limitation vs the fully point-in-time Momentum\/Low-Risk scores.\n'),
-  "lowRisk": zod.number().nullish(),
-  "horizonDays": zod.number().nullish().describe('Prediction horizon in trading days used to label training outcomes'),
-  "backtestAccuracy": zod.number().nullish().describe('Holdout classification accuracy (%) on chronologically split test data'),
-  "backtestWinRate": zod.number().nullish().describe('Precision (%) of positive predictions on holdout data'),
-  "backtestBaseRate": zod.number().nullish().describe('Share (%) of positive labels in the holdout set, for context vs accuracy'),
-  "modelTrainedAt": zod.string().nullish(),
-  "trainSampleSize": zod.number().nullish()
-}).optional().describe('Danelfin-style 1-10 factor scores from a real trained gradient-boosted tree model (not a hand-weighted formula). `available` is false until the model has been trained at least once via the retraining job — in that case all numeric fields are null. Backtested via a chronological (not random) train\/test split for an honest accuracy estimate. This is a statistical estimate based on historical patterns, NOT financial advice, and past performance does not guarantee future results.\n'),
   "trend": zod.object({
   "direction": zod.enum(['bullish', 'bearish', 'neutral']),
   "confidence": zod.number(),

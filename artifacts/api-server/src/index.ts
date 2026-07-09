@@ -1,6 +1,5 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { startRetrainingScheduler } from "./lib/ml/scheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -23,10 +22,4 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
-
-  // Start the weekly ML retraining scheduler in the background.
-  // Any error during scheduler setup is non-fatal — log and continue.
-  startRetrainingScheduler().catch((schedulerErr) => {
-    logger.error({ err: schedulerErr }, "[ml-scheduler] Failed to initialise scheduler");
-  });
 });

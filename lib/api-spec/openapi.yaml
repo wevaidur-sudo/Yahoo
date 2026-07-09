@@ -165,44 +165,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /finance/delisted/{symbol}:
-    get:
-      operationId: getDelistedLookup
-      tags: [finance]
-      summary: Look up a symbol via Tiingo (covers tickers no longer listed on Yahoo Finance)
-      parameters:
-        - name: symbol
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Symbol metadata from Tiingo
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DelistedLookupResult"
-        "404":
-          description: Symbol not found on Tiingo either
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /finance/training-status:
-    get:
-      operationId: getTrainingStatus
-      tags: [finance]
-      summary: Live progress of the background ML retraining job (for UI polling)
-      responses:
-        "200":
-          description: Current phase, progress counters, and scheduler status of the ML training pipeline
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TrainingStatus"
-
   /finance/trending:
     get:
       operationId: getTrending
@@ -321,13 +283,6 @@ components:
           type: string
         score:
           type: ["number", "null"]
-        source:
-          type: string
-          enum: [yahoo, tiingo]
-          description: Which data provider this result came from
-        delisted:
-          type: boolean
-          description: True if the symbol is no longer actively traded (only returned by the Tiingo fallback)
       required:
         - symbol
         - name
@@ -393,13 +348,6 @@ components:
         postMarketTime:
           type: ["string", "null"]
           description: ISO 8601 timestamp of the last post-market price update
-        source:
-          type: string
-          enum: [yahoo, tiingo]
-          description: Which data provider this quote came from
-        delisted:
-          type: boolean
-          description: True if the symbol is no longer actively traded (only set by the Tiingo fallback)
       required:
         - symbol
         - name
@@ -423,27 +371,6 @@ components:
           type: ["number", "null"]
       required:
         - date
-
-    DelistedLookupResult:
-      type: object
-      description: Metadata for a symbol resolved via the Tiingo delisted-stock fallback
-      properties:
-        symbol:
-          type: string
-        name:
-          type: string
-        exchange:
-          type: ["string", "null"]
-        startDate:
-          type: ["string", "null"]
-        endDate:
-          type: ["string", "null"]
-        delisted:
-          type: boolean
-      required:
-        - symbol
-        - name
-        - delisted
 
     NewsArticle:
       type: object
@@ -745,104 +672,6 @@ components:
         - neutralCount
         - signals
 
-    QuantScore:
-      type: object
-      description: >
-        Danelfin-style 1-10 factor scores from a real trained gradient-boosted
-        tree model (not a hand-weighted formula). `available` is false until
-        the model has been trained at least once via the retraining job — in
-        that case all numeric fields are null. Backtested via a chronological
-        (not random) train/test split for an honest accuracy estimate. This
-        is a statistical estimate based on historical patterns, NOT financial
-        advice, and past performance does not guarantee future results.
-      properties:
-        available:
-          type: boolean
-        overall:
-          type: ["number", "null"]
-          description: 1 (bearish) to 10 (bullish) combined score
-        momentum:
-          type: ["number", "null"]
-        value:
-          type: ["number", "null"]
-          description: >
-            Value/fundamental sub-score. Trained using current fundamentals
-            joined across historical price rows (point-in-time historical
-            fundamentals aren't available from this data source) — a known,
-            disclosed limitation vs the fully point-in-time Momentum/Low-Risk scores.
-        lowRisk:
-          type: ["number", "null"]
-        horizonDays:
-          type: ["number", "null"]
-          description: Prediction horizon in trading days used to label training outcomes
-        backtestAccuracy:
-          type: ["number", "null"]
-          description: Holdout classification accuracy (%) on chronologically split test data
-        backtestWinRate:
-          type: ["number", "null"]
-          description: Precision (%) of positive predictions on holdout data
-        backtestBaseRate:
-          type: ["number", "null"]
-          description: Share (%) of positive labels in the holdout set, for context vs accuracy
-        modelTrainedAt:
-          type: ["string", "null"]
-        trainSampleSize:
-          type: ["number", "null"]
-      required:
-        - available
-
-    TrainingStatus:
-      type: object
-      description: >
-        Live progress snapshot of the background ML retraining pipeline, for
-        UI polling. Process-local — resets to "idle" on server restart.
-      properties:
-        phase:
-          type: string
-          enum: [idle, fetching-history, fetching-fundamentals, building-training-set, training-model, done, error]
-        currentSymbol:
-          type: ["string", "null"]
-        symbolsDone:
-          type: number
-        symbolsTotal:
-          type: number
-        currentModelKind:
-          type: ["string", "null"]
-        currentFold:
-          type: ["number", "null"]
-        totalFolds:
-          type: ["number", "null"]
-        message:
-          type: string
-        startedAt:
-          type: ["string", "null"]
-        updatedAt:
-          type: string
-        scheduler:
-          type: object
-          properties:
-            isRunning:
-              type: boolean
-            lastRunAt:
-              type: ["string", "null"]
-            nextRunAt:
-              type: ["string", "null"]
-            lastError:
-              type: ["string", "null"]
-          required: [isRunning, lastRunAt, nextRunAt, lastError]
-      required:
-        - phase
-        - currentSymbol
-        - symbolsDone
-        - symbolsTotal
-        - currentModelKind
-        - currentFold
-        - totalFolds
-        - message
-        - startedAt
-        - updatedAt
-        - scheduler
-
     StockAnalysis:
       type: object
       properties:
@@ -852,8 +681,6 @@ components:
           type: string
         signalScore:
           $ref: "#/components/schemas/SignalScore"
-        quantScore:
-          $ref: "#/components/schemas/QuantScore"
         trend:
           $ref: "#/components/schemas/TrendPrediction"
         intraday:

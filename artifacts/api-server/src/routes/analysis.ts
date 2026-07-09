@@ -10,8 +10,6 @@ import {
   FALLBACK_RISK_FREE_RATE,
   type PayoffLeg,
 } from "../lib/optionsMath";
-import { computeQuantScore } from "../lib/ml/score";
-import type { Bar, FundamentalSnapshot } from "../lib/ml/features";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const yahooFinance = new (YahooFinance as any)({ suppressNotices: ["yahooSurvey"] });
@@ -416,9 +414,8 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
   try {
     const now = new Date();
     const threeMonthsAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-    const oneYearPlusAgo = new Date(now.getTime() - 420 * 24 * 60 * 60 * 1000);
 
-    const [quote, history, summary, newsResult, optionsData, riskFreeRate, quantHistory] =
+    const [quote, history, summary, newsResult, optionsData, riskFreeRate] =
       await Promise.allSettled([
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (yahooFinance as any).quote(symbol) as Promise<any>,
@@ -447,12 +444,6 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (yahooFinance as any).options(symbol) as Promise<any>,
         getRiskFreeRate(),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (yahooFinance as any).chart(symbol, {
-          period1: oneYearPlusAgo,
-          period2: now,
-          interval: "1d",
-        }) as Promise<any>,
       ]);
 
     if (quote.status === "rejected") {
@@ -713,49 +704,10 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no expla
     });
     (dataQuality as any).riskFreeRate = +(r * 100).toFixed(2);
 
-    // ── ML quant score (Danelfin-style 4-factor). Returns available:false if
-    // no trained model exists yet — never silently falls back to the formula.
-    let quantScore = null;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const qHistQuotes: any[] =
-        quantHistory.status === "fulfilled" ? quantHistory.value?.quotes || [] : [];
-      const bars: Bar[] = qHistQuotes
-        .filter((p: any) => p.close != null && p.open != null && p.high != null && p.low != null)
-        .map((p: any) => ({
-          date: new Date(p.date).toISOString().slice(0, 10),
-          open: p.open,
-          high: p.high,
-          low: p.low,
-          close: p.close,
-          volume: p.volume ?? 0,
-        }));
-
-      const fd = summaryData?.financialData;
-      const ks = summaryData?.defaultKeyStatistics;
-      const sd = summaryData?.summaryDetail;
-      const fundamentals: FundamentalSnapshot = {
-        trailingPE: sd?.trailingPE ?? null,
-        forwardPE: ks?.forwardPE ?? null,
-        pegRatio: ks?.pegRatio ?? null,
-        priceToBook: ks?.priceToBook ?? null,
-        revenueGrowth: fd?.revenueGrowth ?? null,
-        earningsGrowth: fd?.earningsGrowth ?? null,
-        grossMargins: fd?.grossMargins ?? null,
-        returnOnEquity: fd?.returnOnEquity ?? null,
-        debtToEquity: fd?.debtToEquity ?? null,
-      };
-
-      quantScore = await computeQuantScore(symbol, bars, fundamentals);
-    } catch (mlErr) {
-      req.log.error({ mlErr, symbol }, "Quant score computation failed");
-    }
-
     res.json({
       symbol,
       generatedAt: new Date().toISOString(),
       signalScore,
-      quantScore,
       trend: aiOutput.trend,
       intraday: aiOutput.intraday,
       technicalIndicators,

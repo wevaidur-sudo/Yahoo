@@ -21,7 +21,6 @@ import type {
 
 import type {
   CompanySummary,
-  DelistedLookupResult,
   ErrorResponse,
   HealthStatus,
   HistoryPeriod,
@@ -33,7 +32,6 @@ import type {
   SearchSymbolsParams,
   StockAnalysis,
   StockQuote,
-  TrainingStatus,
   TrendingTicker
 } from './api.schemas';
 
@@ -527,160 +525,6 @@ export function useGetCompanySummary<TData = Awaited<ReturnType<typeof getCompan
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetCompanySummaryQueryOptions(symbol,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return withQueryKey(query, queryOptions.queryKey);
-}
-
-
-
-
-
-
-
-export const getGetDelistedLookupUrl = (symbol: string,) => {
-
-
-
-
-  return `/api/finance/delisted/${symbol}`
-}
-
-/**
- * @summary Look up a symbol via Tiingo (covers tickers no longer listed on Yahoo Finance)
- */
-export const getDelistedLookup = async (symbol: string, options?: RequestInit): Promise<DelistedLookupResult> => {
-
-  return customFetch<DelistedLookupResult>(getGetDelistedLookupUrl(symbol),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetDelistedLookupQueryKey = (symbol: string,) => {
-    return [
-    `/api/finance/delisted/${symbol}`
-    ] as const;
-    }
-
-
-export const getGetDelistedLookupQueryOptions = <TData = Awaited<ReturnType<typeof getDelistedLookup>>, TError = ErrorType<ErrorResponse>>(symbol: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDelistedLookup>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetDelistedLookupQueryKey(symbol);
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDelistedLookup>>> = ({ signal }) => getDelistedLookup(symbol, { signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, enabled: symbol !== null && symbol !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDelistedLookup>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetDelistedLookupQueryResult = NonNullable<Awaited<ReturnType<typeof getDelistedLookup>>>
-export type GetDelistedLookupQueryError = ErrorType<ErrorResponse>
-
-
-/**
- * @summary Look up a symbol via Tiingo (covers tickers no longer listed on Yahoo Finance)
- */
-
-export function useGetDelistedLookup<TData = Awaited<ReturnType<typeof getDelistedLookup>>, TError = ErrorType<ErrorResponse>>(
- symbol: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDelistedLookup>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetDelistedLookupQueryOptions(symbol,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  return withQueryKey(query, queryOptions.queryKey);
-}
-
-
-
-
-
-
-
-export const getGetTrainingStatusUrl = () => {
-
-
-
-
-  return `/api/finance/training-status`
-}
-
-/**
- * @summary Live progress of the background ML retraining job (for UI polling)
- */
-export const getTrainingStatus = async ( options?: RequestInit): Promise<TrainingStatus> => {
-
-  return customFetch<TrainingStatus>(getGetTrainingStatusUrl(),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-
-
-export const getGetTrainingStatusQueryKey = () => {
-    return [
-    `/api/finance/training-status`
-    ] as const;
-    }
-
-
-export const getGetTrainingStatusQueryOptions = <TData = Awaited<ReturnType<typeof getTrainingStatus>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrainingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-) => {
-
-const {query: queryOptions, request: requestOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetTrainingStatusQueryKey();
-
-
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTrainingStatus>>> = ({ signal }) => getTrainingStatus({ signal, ...requestOptions });
-
-
-
-
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTrainingStatus>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetTrainingStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getTrainingStatus>>>
-export type GetTrainingStatusQueryError = ErrorType<unknown>
-
-
-/**
- * @summary Live progress of the background ML retraining job (for UI polling)
- */
-
-export function useGetTrainingStatus<TData = Awaited<ReturnType<typeof getTrainingStatus>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrainingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
-
- ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-
-  const queryOptions = getGetTrainingStatusQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

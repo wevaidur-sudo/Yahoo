@@ -5,7 +5,6 @@
  * Yahoo Finance Scraper API
  * OpenAPI spec version: 0.1.0
  */
-import type { SearchResultSource } from './searchResultSource';
 
 export interface SearchResult {
   symbol: string;
@@ -14,8 +13,4 @@ export interface SearchResult {
   type: string;
   /** @nullable */
   score?: number | null;
-  /** Which data provider this result came from */
-  source?: SearchResultSource;
-  /** True if the symbol is no longer actively traded (only returned by the Tiingo fallback) */
-  delisted?: boolean;
 }

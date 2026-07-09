@@ -30,17 +30,6 @@ export interface ErrorResponse {
   error: string;
 }
 
-/**
- * Which data provider this result came from
- */
-export type SearchResultSource = typeof SearchResultSource[keyof typeof SearchResultSource];
-
-
-export const SearchResultSource = {
-  yahoo: 'yahoo',
-  tiingo: 'tiingo',
-} as const;
-
 export interface SearchResult {
   symbol: string;
   name: string;
@@ -48,22 +37,7 @@ export interface SearchResult {
   type: string;
   /** @nullable */
   score?: number | null;
-  /** Which data provider this result came from */
-  source?: SearchResultSource;
-  /** True if the symbol is no longer actively traded (only returned by the Tiingo fallback) */
-  delisted?: boolean;
 }
-
-/**
- * Which data provider this quote came from
- */
-export type StockQuoteSource = typeof StockQuoteSource[keyof typeof StockQuoteSource];
-
-
-export const StockQuoteSource = {
-  yahoo: 'yahoo',
-  tiingo: 'tiingo',
-} as const;
 
 export interface StockQuote {
   symbol: string;
@@ -124,10 +98,6 @@ export interface StockQuote {
      * @nullable
      */
   postMarketTime?: string | null;
-  /** Which data provider this quote came from */
-  source?: StockQuoteSource;
-  /** True if the symbol is no longer actively traded (only set by the Tiingo fallback) */
-  delisted?: boolean;
 }
 
 export interface PricePoint {
@@ -144,21 +114,6 @@ export interface PricePoint {
   volume?: number | null;
   /** @nullable */
   adjClose?: number | null;
-}
-
-/**
- * Metadata for a symbol resolved via the Tiingo delisted-stock fallback
- */
-export interface DelistedLookupResult {
-  symbol: string;
-  name: string;
-  /** @nullable */
-  exchange?: string | null;
-  /** @nullable */
-  startDate?: string | null;
-  /** @nullable */
-  endDate?: string | null;
-  delisted: boolean;
 }
 
 export interface NewsArticle {
@@ -397,101 +352,10 @@ export interface SignalScore {
   signals: TechnicalSignal[];
 }
 
-/**
- * Danelfin-style 1-10 factor scores from a real trained gradient-boosted tree model (not a hand-weighted formula). `available` is false until the model has been trained at least once via the retraining job — in that case all numeric fields are null. Backtested via a chronological (not random) train/test split for an honest accuracy estimate. This is a statistical estimate based on historical patterns, NOT financial advice, and past performance does not guarantee future results.
- */
-export interface QuantScore {
-  available: boolean;
-  /**
-     * 1 (bearish) to 10 (bullish) combined score
-     * @nullable
-     */
-  overall?: number | null;
-  /** @nullable */
-  momentum?: number | null;
-  /**
-     * Value/fundamental sub-score. Trained using current fundamentals joined across historical price rows (point-in-time historical fundamentals aren't available from this data source) — a known, disclosed limitation vs the fully point-in-time Momentum/Low-Risk scores.
-     * @nullable
-     */
-  value?: number | null;
-  /** @nullable */
-  lowRisk?: number | null;
-  /**
-     * Prediction horizon in trading days used to label training outcomes
-     * @nullable
-     */
-  horizonDays?: number | null;
-  /**
-     * Holdout classification accuracy (%) on chronologically split test data
-     * @nullable
-     */
-  backtestAccuracy?: number | null;
-  /**
-     * Precision (%) of positive predictions on holdout data
-     * @nullable
-     */
-  backtestWinRate?: number | null;
-  /**
-     * Share (%) of positive labels in the holdout set, for context vs accuracy
-     * @nullable
-     */
-  backtestBaseRate?: number | null;
-  /** @nullable */
-  modelTrainedAt?: string | null;
-  /** @nullable */
-  trainSampleSize?: number | null;
-}
-
-export type TrainingStatusPhase = typeof TrainingStatusPhase[keyof typeof TrainingStatusPhase];
-
-
-export const TrainingStatusPhase = {
-  idle: 'idle',
-  'fetching-history': 'fetching-history',
-  'fetching-fundamentals': 'fetching-fundamentals',
-  'building-training-set': 'building-training-set',
-  'training-model': 'training-model',
-  done: 'done',
-  error: 'error',
-} as const;
-
-export type TrainingStatusScheduler = {
-  isRunning: boolean;
-  /** @nullable */
-  lastRunAt: string | null;
-  /** @nullable */
-  nextRunAt: string | null;
-  /** @nullable */
-  lastError: string | null;
-};
-
-/**
- * Live progress snapshot of the background ML retraining pipeline, for UI polling. Process-local — resets to "idle" on server restart.
- */
-export interface TrainingStatus {
-  phase: TrainingStatusPhase;
-  /** @nullable */
-  currentSymbol: string | null;
-  symbolsDone: number;
-  symbolsTotal: number;
-  /** @nullable */
-  currentModelKind: string | null;
-  /** @nullable */
-  currentFold: number | null;
-  /** @nullable */
-  totalFolds: number | null;
-  message: string;
-  /** @nullable */
-  startedAt: string | null;
-  updatedAt: string;
-  scheduler: TrainingStatusScheduler;
-}
-
 export interface StockAnalysis {
   symbol: string;
   generatedAt: string;
   signalScore: SignalScore;
-  quantScore?: QuantScore;
   trend: TrendPrediction;
   intraday: IntradayAnalysis;
   technicalIndicators: TechnicalIndicators;

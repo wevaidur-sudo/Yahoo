@@ -1,0 +1,59 @@
+Plan: What a Premium Intraday Prediction Engine Needs
+Layer 1 — Intraday Data Foundation (highest priority)
+Yahoo Finance's API (already in use) supports intraday intervals: 1m (up to 7 days), 5m (up to 60 days), 15m, 30m, 1h. We need to fetch today's intraday bars and yesterday's session on every analysis call.
+
+What to compute from those bars:
+
+VWAP (Volume-Weighted Average Price) — the single most important intraday level. Institutions buy/sell around VWAP. Price above = bullish bias, below = bearish. Also compute ±1σ and ±2σ bands.
+Opening Range (ORB) — first 15 or 30 minutes' High/Low. The most proven intraday breakout framework.
+Gap analysis — today's open vs. yesterday's close: gap size (%), direction, and gap-fill probability (historically ~70% of gaps under 2% fill by end of session)
+Relative Volume (RVOL) — current cumulative volume vs. historical average volume at the same time of day. RVOL > 1.5x = institutional participation, setups are more reliable
+Pre-market High/Low — key intraday support/resistance levels that most retail traders miss
+Previous Day's High/Low/Close (PDH/PDL/PDC) — the most respected intraday levels
+Layer 2 — Intraday-Specific Signal Engine (replaces the current daily-bar engine for intraday use)
+New signals computed on 5m and 15m timeframes:
+
+Signal	Weight	Why
+VWAP position + trend	20	Primary institutional bias
+ORB breakout status	15	Highest-probability intraday setup
+Multi-timeframe alignment (5m+15m+1h RSI all agree)	15	High-conviction filter
+RVOL confirmation	15	Moves without volume are traps
+Gap direction + fill risk	10	Changes bias entirely
+Pre-market level respect	10	Key S/R levels
+PDH/PDL level proximity	10	Magnetic levels
+Intraday MACD (15m)	5	Momentum confirmation
+New score: 0–100 Conviction Score (directional separate from strength — cleaner for intraday where you need a bias + a confidence, not a net score)
+
+Layer 3 — Trade Setup Generator (the premium output)
+Every analysis produces a concrete, actionable setup — not just "bullish":
+
+Bias: Bull / Bear / No-trade (flat/choppy)
+Setup type: ORB Breakout / VWAP Reclaim / Gap Fill / PDH/PDL Breakout / Mean Reversion
+Entry zone: Specific price range (e.g., "enter on retest of VWAP at $182.40–$183.10")
+Stop loss: ATR-based below the nearest key level
+Target 1 / Target 2: ORB extension, PDH, pre-market high — with R:R ratios
+Best entry window: Time-of-day awareness (9:30–10:30 momentum, 10:30–2:00 chop avoidance, 2:00–4:00 trend resumption)
+No-trade conditions: Low RVOL, no ORB break, inside-day, gap uncertainty
+Layer 4 — AI Rewrite for Intraday (Gemini prompt overhaul)
+The current Gemini prompt is written for swing trading (it discusses valuation multiples, P/E, analyst ratings). For intraday, these are noise. The rewritten prompt gives the model:
+
+Today's VWAP position, ORB status, gap data, RVOL, pre-market levels
+Asks for: session bias, highest-probability setup, key catalysts (earnings, news), risk flags
+Explicitly instructs it to think in today's session only — no multi-day forecasting
+Layer 5 — Premium UI Overhaul (what makes it feel professional)
+Today's intraday price chart with VWAP line, ORB zone shaded, PDH/PDL marked, pre-market H/L — all overlaid on a 5m candlestick chart
+Market session clock — live display of time into session, what phase we're in (pre-market / opening range window / regular session / power hour / after-hours)
+Trade setup card — clean Entry / Stop / Target display with R:R, color-coded conviction
+Auto-refresh — during market hours, re-fetch price and update intraday indicators every 60 seconds without losing position in the UI
+No-trade indicator — explicit "PASS — low RVOL, wait for confirmation" rather than forcing a signal in bad conditions
+What This Requires Technically
+Component	Effort	Risk
+Intraday data fetching (1m/5m bars from Yahoo)	Low — API already wired	Low
+VWAP + ORB + gap computation	Medium — pure math	Low
+New signal engine (replace daily-bar engine)	Medium	Low
+Trade setup generator (entry/stop/target)	Medium	Low
+Gemini prompt rewrite	Low	Low
+5m candlestick chart with overlays (Recharts or TradingView Lightweight Charts)	High — new component	Medium
+Auto-refresh during market hours	Low	Low
+Session-aware UI (clock, phases)	Low	Low
+Total: ~5–7 focused features. These can be parallelized into 2–3 task agents or built sequentially.

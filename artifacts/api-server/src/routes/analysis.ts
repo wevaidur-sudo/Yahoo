@@ -640,7 +640,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no expla
 
     const genAI = getGemini();
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash-lite",
+      model: "gemini-3.1-flash-lite",
       generationConfig: {
         responseMimeType: "application/json",
         maxOutputTokens: 8192,
@@ -836,7 +836,7 @@ Return ONLY valid JSON (no markdown):
 
       const genAI = getGemini();
       const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash-lite",
+        model: "gemini-3.1-flash-lite",
         generationConfig: {
           responseMimeType: "application/json",
           maxOutputTokens: 8192,

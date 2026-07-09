@@ -141,10 +141,13 @@ export function computeIntradayLevels(params: {
   const pdLow   = prevDay?.low   != null ? +(prevDay.low.toFixed(2))   : null;
   const pdClose = prevDay?.close != null ? +(prevDay.close.toFixed(2)) : null;
 
-  // ── ATR (Average True Range) from last 5 daily bars — used for stop sizing
+  // ── ATR (Average True Range) from last 14 daily bars — used for stop sizing
+  // 14-bar Wilder ATR is the standard; 5-bar is too sensitive to single-day spikes
+  // and produces unstable stop/target levels that amplify sizing noise.
+  const ATR_PERIOD = 14;
   let intradayAtr: number | null = null;
-  if (dailyBars.length >= 5) {
-    const recent = dailyBars.slice(-5);
+  if (dailyBars.length >= ATR_PERIOD) {
+    const recent = dailyBars.slice(-ATR_PERIOD);
     const trs = recent.map((b, i) => {
       if (i === 0) return b.high - b.low;
       const prev = recent[i - 1];

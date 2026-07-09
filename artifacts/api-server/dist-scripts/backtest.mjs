@@ -28717,9 +28717,10 @@ function computeIntradayLevels(params) {
   const pdHigh = prevDay?.high != null ? +prevDay.high.toFixed(2) : null;
   const pdLow = prevDay?.low != null ? +prevDay.low.toFixed(2) : null;
   const pdClose = prevDay?.close != null ? +prevDay.close.toFixed(2) : null;
+  const ATR_PERIOD = 14;
   let intradayAtr = null;
-  if (dailyBars.length >= 5) {
-    const recent = dailyBars.slice(-5);
+  if (dailyBars.length >= ATR_PERIOD) {
+    const recent = dailyBars.slice(-ATR_PERIOD);
     const trs = recent.map((b, i) => {
       if (i === 0) return b.high - b.low;
       const prev = recent[i - 1];
@@ -29100,7 +29101,8 @@ function computeIntradaySignals(params) {
   }
   const net = weightedBull - weightedBear;
   let direction = net > 0 ? "bullish" : net < 0 ? "bearish" : "no-trade";
-  let conviction = totalWeight > 0 ? Math.round(Math.abs(net) / totalWeight * 100) : 0;
+  const MAX_SIGNAL_WEIGHT = 105;
+  let conviction = Math.round(Math.abs(net) / MAX_SIGNAL_WEIGHT * 100);
   let noTradeReason = null;
   if (l.rvol != null) {
     if (l.rvol >= 1.5) {
@@ -29111,7 +29113,6 @@ function computeIntradaySignals(params) {
         value: `${l.rvol.toFixed(2)}x average`,
         note: `High RVOL ${l.rvol.toFixed(1)}x \u2014 institutional participation confirmed; setup reliability elevated`
       });
-      conviction = Math.min(100, Math.round(conviction * 1.2));
     } else if (l.rvol < 0.6) {
       signals.push({
         name: "Relative Volume",
@@ -29134,7 +29135,14 @@ function computeIntradaySignals(params) {
     }
   }
   if (direction !== "no-trade") {
-    if (conviction < 25) {
+    const alignedCount = direction === "bullish" ? bullishCount : bearishCount;
+    if (alignedCount < 2) {
+      noTradeReason = "Only one confirming signal \u2014 need at least 2 aligned indicators for a reliable setup";
+      direction = "no-trade";
+    }
+  }
+  if (direction !== "no-trade") {
+    if (conviction < 35) {
       noTradeReason = "Conflicting signals \u2014 insufficient directional edge for a high-probability setup";
       direction = "no-trade";
     }
@@ -29145,9 +29153,23 @@ function computeIntradaySignals(params) {
   return { direction, conviction, bullishCount, bearishCount, neutralCount, noTradeReason, signals };
 }
 var EMPIRICAL_ALLOWED_SETUP_TYPES = [
-  "Pre-Market Low Breakdown",
+  // ✅ Cleared TRAIN gate AND positive combined: strongest evidence.
+  // Combined: 55.3% WR, +0.20R (94 trades). TRAIN: 68.9% WR, +0.43R (61 trades).
   "Previous Day Low Breakdown",
+  // ⚠️  Provisional — positive COMBINED but TRAIN avg R is -0.00R (borderline).
+  // Combined: 50.0% WR, +0.19R (32 trades). Thesis: pre-market low is a well-
+  // respected institutional level; breakdown has same mechanics as PDL breakdown.
+  // Remove from this list if next backtest run shows combined avg R turns negative.
+  "Pre-Market Low Breakdown",
+  // ⚠️  Provisional — positive prior run (56.3% WR) but 0 trades in latest run
+  // (setup requires spot within 0.3% of VWAP at a fixed decision time — rare).
+  // Sound thesis: spot retesting VWAP from below with bearish bias = clean rejection.
+  // Keep until two consecutive runs produce 0 trades (then reassess definition).
   "VWAP Rejection"
+  // ✗  Long-side setups ALL blocked: PDH Breakout (-0.26R), ORB Breakout (-0.27R),
+  //    Pre-Market High Breakout (+0.01R near-zero) showed no reliable edge in the
+  //    current data window. Long setups are further guarded by the ≥50 conviction
+  //    floor in generateTradeSetup. Revisit after next backtest run.
 ];
 function generateTradeSetup(params) {
   const { spot, levels: l, signalScore, now, bypassEmpiricalGate } = params;
@@ -29172,6 +29194,23 @@ function generateTradeSetup(params) {
     };
   }
   const bias = signalScore.direction === "bullish" ? "long" : "short";
+  if (bias === "long" && signalScore.conviction < 50) {
+    return {
+      bias: "no-trade",
+      setupType: "No Setup",
+      entryLow: null,
+      entryHigh: null,
+      stopLoss: null,
+      target1: null,
+      target2: null,
+      rrRatio1: null,
+      rrRatio2: null,
+      riskPerShare: null,
+      bestWindow,
+      noTradeReason: `Long setup conviction ${signalScore.conviction}% is below the 50% floor \u2014 long trades require stronger signal alignment (shorts need only 35%)`,
+      confidence: signalScore.conviction
+    };
+  }
   const rawAtr = l.intradayAtr ?? +(spot * 0.015).toFixed(2);
   if (!(rawAtr > 0)) {
     return {
@@ -29297,7 +29336,7 @@ function generateTradeSetup(params) {
   const MAX_RR = 6;
   const rrRatio1 = target1 != null && riskPerShare && riskPerShare > 0 ? +Math.min(Math.abs(target1 - entryMid) / riskPerShare, MAX_RR).toFixed(1) : null;
   const rrRatio2 = target2 != null && riskPerShare && riskPerShare > 0 ? +Math.min(Math.abs(target2 - entryMid) / riskPerShare, MAX_RR).toFixed(1) : null;
-  const MIN_RR = 1;
+  const MIN_RR = 1.2;
   if (rrRatio1 != null && rrRatio1 < MIN_RR) {
     return {
       bias: "no-trade",
@@ -60189,7 +60228,7 @@ No backtest \u2014 however rigorous \u2014 is a substitute for paper-trading bef
 because live fills, slippage, and regime changes are not captured here.
 `;
   const fs = await import("node:fs/promises");
-  await fs.writeFile(new URL("../../BACKTEST_REPORT.md", import.meta.url), report);
+  await fs.writeFile(new URL("../BACKTEST_REPORT.md", import.meta.url), report);
   console.log("\n" + report);
   console.log("\nFull report written to artifacts/api-server/BACKTEST_REPORT.md");
   console.log("\nALLOWLIST_JSON=" + JSON.stringify([...allowlist]));

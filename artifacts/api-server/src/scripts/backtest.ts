@@ -460,7 +460,8 @@ because live fills, slippage, and regime changes are not captured here.
 `;
 
   const fs = await import("node:fs/promises");
-  await fs.writeFile(new URL("../../BACKTEST_REPORT.md", import.meta.url), report);
+  // dist-scripts/backtest.mjs → one level up → artifacts/api-server/BACKTEST_REPORT.md
+  await fs.writeFile(new URL("../BACKTEST_REPORT.md", import.meta.url), report);
 
   console.log("\n" + report);
   console.log("\nFull report written to artifacts/api-server/BACKTEST_REPORT.md");

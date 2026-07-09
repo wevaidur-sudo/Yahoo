@@ -2,32 +2,27 @@
  * DataSourceManager — multi-source OHLCV fetcher with DB caching.
  *
  * Priority order for intraday (5m) data:
- *   1. DB cache        — fastest, zero network cost
- *   2. Alpha Vantage   — ~30 days on free plan; full history on premium
- *   3. Yahoo           — ~60 days of 5m, always available as fallback
+ *   1. DB cache — fastest, zero network cost
+ *   2. Yahoo   — ~60 days of 5m history
  *
  * For daily (1d) data:
  *   1. DB cache
- *   2. Yahoo         (decades of daily data, very reliable)
- *   3. Alpha Vantage (up to 20 years of daily data, fallback)
+ *   2. Yahoo (decades of daily data)
  *
- * Coverage validation: a source result is accepted only when its bars span
- * at least MIN_COVERAGE_FRACTION of the requested window AND the bar density
- * is plausible for the interval (no large internal holes).  Otherwise the
+ * Coverage validation: a source result is accepted only when its bar density
+ * is plausible for the interval (no large internal holes). Otherwise the
  * manager falls through to the next source.
  */
 
 import type { IntradayBar } from "../intraday";
 import type { BarInterval, DataSource } from "./types";
-import { AlphaVantageSource } from "./alphavantage";
 import { YahooSource } from "./yahoo";
 
-const alphavantage = new AlphaVantageSource();
 const yahoo = new YahooSource();
 
 /** Ordered source lists for each interval. */
-const INTRADAY_SOURCES: DataSource[] = [alphavantage, yahoo];
-const DAILY_SOURCES:    DataSource[] = [yahoo, alphavantage];
+const INTRADAY_SOURCES: DataSource[] = [yahoo];
+const DAILY_SOURCES:    DataSource[] = [yahoo];
 
 const DAY_MS = 86_400_000;
 

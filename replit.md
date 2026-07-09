@@ -53,16 +53,14 @@ pnpm --filter @workspace/api-server run backtest
 
 Data sources tried in order for intraday (5m) bars:
 1. **DB cache** (`ohlcv_bars`) — zero network cost, populated on first run
-2. **Alpha Vantage** — ~30 days on free plan; full history on premium (month-by-month fetch)
-3. **Yahoo Finance** — ~60-day fallback (automatically clamped to its supported window)
+2. **Yahoo Finance** — ~60 days of 5m history
 
-For daily (1d) bars the order is DB cache → Yahoo → Alpha Vantage (up to 20 years).
+For daily (1d) bars: DB cache → Yahoo Finance (decades of history).
 
 ## Required Secrets
 
 | Secret | Purpose |
 |--------|---------|
-| `ALPHA_VANTAGE_API_KEY` | OHLCV bar data (intraday + daily) |
 | `GEMINI_API_KEY` | AI-powered qualitative analysis |
 | `SESSION_SECRET` | Express session signing |
 

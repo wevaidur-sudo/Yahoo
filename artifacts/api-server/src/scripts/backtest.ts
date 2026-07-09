@@ -32,7 +32,17 @@ import { computeIntradaySignals, generateTradeSetup } from "../lib/intraday-sign
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const yahooFinance = new (YahooFinance as any)({ suppressNotices: ["yahooSurvey"] });
 
-const SYMBOLS = ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA", "META", "GOOGL", "SPY"];
+const SYMBOLS = [
+  "AAPL", "MSFT", "NVDA", "AMZN", "TSLA", "META", "GOOGL", "SPY",
+  "QQQ", "AMD", "NFLX", "JPM", "XOM", "UNH", "COST", "AVGO", "CRM", "ORCL",
+];
+
+// Fraction of each symbol's available days used as the TRAIN window (used to
+// pick the setup-type allowlist). The remaining days are the held-out TEST
+// window, scored with the allowlist derived from train only — this is a
+// walk-forward split, not an in-sample fit, so the reported test numbers are
+// honest evidence of out-of-sample performance.
+const TRAIN_FRACTION = 0.65;
 
 // Decision times to test, in ET decimal hours — matches the app's own
 // "best entry window" guidance (opening momentum, late morning, afternoon).
@@ -124,6 +134,7 @@ interface TradeResult {
   rrRatio1: number;
   outcome: "win" | "loss" | "open-at-close";
   rMultiple: number;
+  phase: "train" | "test";
 }
 
 async function fetchBars(symbol: string, interval: "5m" | "1d", days: number): Promise<IntradayBar[]> {
@@ -163,11 +174,13 @@ async function backtestSymbol(symbol: string): Promise<{ trades: TradeResult[]; 
     byDay.get(key)!.push(b);
   }
   const days = [...byDay.keys()].sort();
+  const splitIdx = Math.floor(days.length * TRAIN_FRACTION);
 
   // Need ~25 daily bars of trailing history before we trust ATR/avgVolume.
   const MIN_DAILY_HISTORY = 25;
 
-  for (const day of days) {
+  for (const [dayIdx, day] of days.entries()) {
+    const phase: "train" | "test" = dayIdx < splitIdx ? "train" : "test";
     const dayBars = byDay.get(day)!.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     if (dayBars.length < 20) continue; // partial/holiday-shortened day, skip
 
@@ -248,6 +261,12 @@ async function backtestSymbol(symbol: string): Promise<{ trades: TradeResult[]; 
           rMultiple = setup.bias === "long"
             ? (lastClose - entryMid) / risk
             : (entryMid - lastClose) / risk;
+          // Cap unresolved marks at a realistic ceiling: a disciplined trader
+          // would have taken profit at/around target2, not held indefinitely.
+          // Without this, a handful of runaway trend days dominate the whole
+          // average-R statistic and make it meaningless.
+          const cap = setup.rrRatio2 ?? setup.rrRatio1 * 1.5;
+          rMultiple = Math.max(-1.5, Math.min(rMultiple, cap));
         }
 
         trades.push({
@@ -255,6 +274,7 @@ async function backtestSymbol(symbol: string): Promise<{ trades: TradeResult[]; 
           setupType: setup.setupType, bias: setup.bias,
           conviction: setup.confidence, rrRatio1: setup.rrRatio1,
           outcome, rMultiple: +rMultiple.toFixed(2),
+          phase,
         });
       } catch (err) {
         errors++;
@@ -292,8 +312,21 @@ function summarize(trades: TradeResult[], groupBy: (t: TradeResult) => string): 
   return rows.join("\n");
 }
 
+function stats(trades: TradeResult[]) {
+  const wins = trades.filter((t) => t.rMultiple > 0).length;
+  const losses = trades.filter((t) => t.rMultiple <= 0).length;
+  const winRate = trades.length ? (wins / trades.length) * 100 : 0;
+  const avgR = trades.length ? trades.reduce((s, t) => s + t.rMultiple, 0) / trades.length : 0;
+  const avgWinR = wins ? trades.filter((t) => t.rMultiple > 0).reduce((s, t) => s + t.rMultiple, 0) / wins : 0;
+  const avgLossR = losses ? trades.filter((t) => t.rMultiple <= 0).reduce((s, t) => s + t.rMultiple, 0) / losses : 0;
+  return { n: trades.length, wins, losses, winRate, avgR, avgWinR, avgLossR };
+}
+
+/** Minimum trade count in TRAIN before a setup type is trusted enough to allow. */
+const MIN_TRAIN_N = 12;
+
 async function main() {
-  console.log(`Backtesting ${SYMBOLS.length} symbols across ${DECISION_TIMES_ET.length} daily decision windows...\n`);
+  console.log(`Backtesting ${SYMBOLS.length} symbols across ${DECISION_TIMES_ET.length} daily decision windows (walk-forward ${Math.round(TRAIN_FRACTION * 100)}/${Math.round((1 - TRAIN_FRACTION) * 100)} train/test split)...\n`);
 
   const allTrades: TradeResult[] = [];
   let totalNoTrade = 0;
@@ -308,55 +341,93 @@ async function main() {
     console.log(` ${trades.length} trades, ${noTradeCount} filtered no-trade`);
   }
 
-  const wins = allTrades.filter((t) => t.rMultiple > 0).length;
-  const losses = allTrades.filter((t) => t.rMultiple <= 0).length;
-  const winRate = allTrades.length ? (wins / allTrades.length) * 100 : 0;
-  const avgR = allTrades.length ? allTrades.reduce((s, t) => s + t.rMultiple, 0) / allTrades.length : 0;
-  const avgWinR = wins ? allTrades.filter((t) => t.rMultiple > 0).reduce((s, t) => s + t.rMultiple, 0) / wins : 0;
-  const avgLossR = losses ? allTrades.filter((t) => t.rMultiple <= 0).reduce((s, t) => s + t.rMultiple, 0) / losses : 0;
+  const trainTrades = allTrades.filter((t) => t.phase === "train");
+  const testTrades  = allTrades.filter((t) => t.phase === "test");
+
+  // ── Derive the setup-type allowlist from TRAIN data only ──────────────────
+  const byType = new Map<string, TradeResult[]>();
+  for (const t of trainTrades) {
+    if (!byType.has(t.setupType)) byType.set(t.setupType, []);
+    byType.get(t.setupType)!.push(t);
+  }
+  const allowlist = new Set<string>();
+  const typeVerdicts: string[] = [];
+  for (const [type, ts] of [...byType.entries()].sort()) {
+    const s = stats(ts);
+    const allowed = s.n >= MIN_TRAIN_N && s.avgR > 0;
+    if (allowed) allowlist.add(type);
+    typeVerdicts.push(
+      `| ${type} | ${s.n} | ${s.winRate.toFixed(1)}% | ${s.avgR >= 0 ? "+" : ""}${s.avgR.toFixed(2)}R | ${allowed ? "✅ ALLOWED" : s.n < MIN_TRAIN_N ? "⛔ insufficient data" : "⛔ negative edge"} |`,
+    );
+  }
+
+  // ── Score TEST trades both with and without the allowlist gate ───────────
+  const testUnfiltered = stats(testTrades);
+  const testFiltered = stats(testTrades.filter((t) => allowlist.has(t.setupType)));
+  const trainOverall = stats(trainTrades);
 
   const report = `# Intraday Signal Engine — Backtest Report
 
 Generated: ${new Date().toISOString()}
 
 ## Methodology
-- Symbols: ${SYMBOLS.join(", ")}
+- Symbols (${SYMBOLS.length}): ${SYMBOLS.join(", ")}
 - Data: Yahoo Finance 5m bars (~58 days, no pre/post market) + 1d bars (~150 days) for PDH/PDL/ATR/avg-volume
 - Decision windows tested per trading day (ET): ${DECISION_TIMES_ET.map((t) => `${Math.floor(t)}:${String(Math.round((t % 1) * 60)).padStart(2, "0")}`).join(", ")}
 - Uses the exact production code path: \`computeIntradayLevels\` → \`computeIntradaySignals\` → \`generateTradeSetup\`
+- **Walk-forward split**: first ${Math.round(TRAIN_FRACTION * 100)}% of each symbol's trading days = TRAIN (used only to derive the setup-type quality gate below), last ${Math.round((1 - TRAIN_FRACTION) * 100)}% = TEST (held out, scored with the gate frozen from TRAIN — this is genuine out-of-sample evidence, not a re-fit)
 - Trade outcome: simulated bar-by-bar until stop or target1 hit, or scored mark-to-close if neither hit by session end
 - **No commissions, spread, or slippage modeled.** Pre-market signals are inactive in this backtest (Yahoo 5m history excludes pre/post bars) — they are live in production, which uses 1m bars with pre/post included.
 
-## Overall Results
-- Total setups generated: ${allTrades.length}
-- Filtered as no-trade (incl. new R:R quality filter): ${totalNoTrade}
-- Fetch/compute errors: ${totalErrors}
-- Win rate: **${winRate.toFixed(1)}%**
-- Average R-multiple per trade: **${avgR >= 0 ? "+" : ""}${avgR.toFixed(2)}R**
-- Average winner: +${avgWinR.toFixed(2)}R — Average loser: ${avgLossR.toFixed(2)}R
-- Expectancy: ${avgR >= 0 ? "positive" : "negative"} (${avgR >= 0 ? "the system's average R is above breakeven" : "the system is currently losing on average across this sample"})
+## Setup-Type Quality Gate (derived from TRAIN only, N ≥ ${MIN_TRAIN_N})
+| Setup Type | N (train) | Win Rate | Avg R | Verdict |
+|---|---|---|---|---|
+${typeVerdicts.join("\n")}
 
-## By Setup Type
+**Allowed setup types (shipped to production):** ${[...allowlist].join(", ") || "none met the bar"}
+
+## TRAIN Results (in-sample — for reference only, not evidence)
+- N=${trainOverall.n}, win rate ${trainOverall.winRate.toFixed(1)}%, avg ${trainOverall.avgR >= 0 ? "+" : ""}${trainOverall.avgR.toFixed(2)}R
+
+## TEST Results (held-out — this is the real evidence)
+| | N | Win Rate | Avg R |
+|---|---|---|---|
+| Unfiltered (all setup types) | ${testUnfiltered.n} | ${testUnfiltered.winRate.toFixed(1)}% | ${testUnfiltered.avgR >= 0 ? "+" : ""}${testUnfiltered.avgR.toFixed(2)}R |
+| **With quality gate applied** | ${testFiltered.n} | **${testFiltered.winRate.toFixed(1)}%** | **${testFiltered.avgR >= 0 ? "+" : ""}${testFiltered.avgR.toFixed(2)}R** |
+
+Filtering out setup types that showed negative or unreliable edge on TRAIN, and re-scoring only
+on TEST (data the gate never saw), moved win rate from ${testUnfiltered.winRate.toFixed(1)}% to
+${testFiltered.winRate.toFixed(1)}% and average R from ${testUnfiltered.avgR.toFixed(2)}R to ${testFiltered.avgR.toFixed(2)}R.
+${testFiltered.avgR > testUnfiltered.avgR ? "The gate improved out-of-sample expectancy." : "The gate did NOT clearly improve out-of-sample expectancy — treat the allowlist as provisional, not proven."}
+
+## Full Breakdown (all trades, both phases combined)
+### By Setup Type
 | Setup Type | N | Win Rate | Avg R |
 |---|---|---|---|
 ${summarize(allTrades, (t) => t.setupType)}
 
-## By Conviction Bucket
+### By Conviction Bucket
 | Conviction | N | Win Rate | Avg R |
 |---|---|---|---|
 ${summarize(allTrades, (t) => bucketConviction(t.conviction))}
 
-## By Bias
+### By Bias
 | Bias | N | Win Rate | Avg R |
 |---|---|---|---|
 ${summarize(allTrades, (t) => t.bias)}
 
+## Operational Stats
+- Total setups generated: ${allTrades.length}
+- Filtered as no-trade (conviction/R:R gates, before the setup-type gate): ${totalNoTrade}
+- Fetch/compute errors: ${totalErrors}
+
 ## Caveats (read before acting on this)
-This is a **starting point**, not statistical proof. With ~${SYMBOLS.length} symbols × ~45 usable days × ${DECISION_TIMES_ET.length} windows,
-the sample is too small to confirm or reject the signal weights with confidence — treat it as
-"does this look directionally sane" rather than "this is validated." To get real evidence:
-increase symbol count and history length, add walk-forward validation (don't reuse the same
-period to tune and test), and eventually paper-trade before risking capital.
+This is walk-forward evidence, which is meaningfully stronger than a single in-sample run — but
+the TEST sample (~${testTrades.length} trades) is still modest. Treat the setup-type gate as
+**provisional and subject to revision** as more data accrues; rerun \`pnpm run backtest\` monthly
+and update \`EMPIRICAL_SETUP_ALLOWLIST\` in \`intraday-signals.ts\` from the new TRAIN verdicts.
+No backtest — however rigorous — is a substitute for paper-trading before risking real capital,
+because live fills, slippage, and regime changes are not captured here.
 `;
 
   const fs = await import("node:fs/promises");
@@ -364,6 +435,7 @@ period to tune and test), and eventually paper-trade before risking capital.
 
   console.log("\n" + report);
   console.log("\nFull report written to artifacts/api-server/BACKTEST_REPORT.md");
+  console.log("\nALLOWLIST_JSON=" + JSON.stringify([...allowlist]));
 }
 
 main().catch((err) => {

@@ -33592,6 +33592,27 @@ function generateTradeSetup(params) {
   else if (l.pdLow && spot < l.pdLow && bias === "short") setupType = "Previous Day Low Breakdown";
   else if (l.preMarketHigh && spot > l.preMarketHigh && bias === "long") setupType = "Pre-Market High Breakout";
   else if (l.preMarketLow && spot < l.preMarketLow && bias === "short") setupType = "Pre-Market Low Breakdown";
+  const EMPIRICAL_SETUP_ALLOWLIST = /* @__PURE__ */ new Set([
+    "Previous Day Low Breakdown",
+    "VWAP Rejection"
+  ]);
+  if (!EMPIRICAL_SETUP_ALLOWLIST.has(setupType)) {
+    return {
+      bias: "no-trade",
+      setupType: "No Setup",
+      entryLow: null,
+      entryHigh: null,
+      stopLoss: null,
+      target1: null,
+      target2: null,
+      rrRatio1: null,
+      rrRatio2: null,
+      riskPerShare: null,
+      bestWindow,
+      noTradeReason: `${setupType} has not demonstrated a reliable backtested edge yet \u2014 passing rather than forcing an unproven setup`,
+      confidence: signalScore.conviction
+    };
+  }
   let entryLow = null;
   let entryHigh = null;
   let stopLoss = null;
@@ -33601,12 +33622,13 @@ function generateTradeSetup(params) {
     const trigger = l.orbBroken === "up" ? l.orbHigh : l.vwap ?? spot;
     entryLow = +Math.max(trigger ?? spot, spot - atr * 0.15).toFixed(2);
     entryHigh = +((trigger ?? spot) + atr * 0.15).toFixed(2);
+    const MIN_STOP_ATR = 0.4;
     const stopCandidates = [
       l.vwapLower1,
       l.vwap ? l.vwap - halfAtr : null,
       l.orbLow ? l.orbLow - atr * 0.1 : null,
       l.pdLow ? l.pdLow - atr * 0.05 : null
-    ].filter((v) => v != null && v < spot - halfAtr * 0.3);
+    ].filter((v) => v != null && v <= spot - atr * MIN_STOP_ATR);
     stopLoss = stopCandidates.length ? +Math.max(...stopCandidates).toFixed(2) : +(spot - atr * 0.75).toFixed(2);
     const t1Candidates = [
       l.orbHigh && l.orbRange ? l.orbHigh + l.orbRange : null,
@@ -33624,12 +33646,13 @@ function generateTradeSetup(params) {
     const trigger = l.orbBroken === "down" ? l.orbLow : l.vwap ?? spot;
     entryHigh = +Math.min(trigger ?? spot, spot + atr * 0.15).toFixed(2);
     entryLow = +((trigger ?? spot) - atr * 0.15).toFixed(2);
+    const MIN_STOP_ATR = 0.4;
     const stopCandidates = [
       l.vwapUpper1,
       l.vwap ? l.vwap + halfAtr : null,
       l.orbHigh ? l.orbHigh + atr * 0.1 : null,
       l.pdHigh ? l.pdHigh + atr * 0.05 : null
-    ].filter((v) => v != null && v > spot + halfAtr * 0.3);
+    ].filter((v) => v != null && v >= spot + atr * MIN_STOP_ATR);
     stopLoss = stopCandidates.length ? +Math.min(...stopCandidates).toFixed(2) : +(spot + atr * 0.75).toFixed(2);
     const t1Candidates = [
       l.orbLow && l.orbRange ? l.orbLow - l.orbRange : null,
@@ -33646,8 +33669,9 @@ function generateTradeSetup(params) {
   }
   const entryMid = entryLow != null && entryHigh != null ? (entryLow + entryHigh) / 2 : entryLow ?? entryHigh ?? spot;
   const riskPerShare = stopLoss != null ? +Math.abs(entryMid - stopLoss).toFixed(2) : null;
-  const rrRatio1 = target1 != null && riskPerShare && riskPerShare > 0 ? +(Math.abs(target1 - entryMid) / riskPerShare).toFixed(1) : null;
-  const rrRatio2 = target2 != null && riskPerShare && riskPerShare > 0 ? +(Math.abs(target2 - entryMid) / riskPerShare).toFixed(1) : null;
+  const MAX_RR = 6;
+  const rrRatio1 = target1 != null && riskPerShare && riskPerShare > 0 ? +Math.min(Math.abs(target1 - entryMid) / riskPerShare, MAX_RR).toFixed(1) : null;
+  const rrRatio2 = target2 != null && riskPerShare && riskPerShare > 0 ? +Math.min(Math.abs(target2 - entryMid) / riskPerShare, MAX_RR).toFixed(1) : null;
   const MIN_RR = 1;
   if (rrRatio1 != null && rrRatio1 < MIN_RR) {
     return {
@@ -33685,7 +33709,27 @@ function generateTradeSetup(params) {
 
 // src/scripts/backtest.ts
 var yahooFinance = new src_default({ suppressNotices: ["yahooSurvey"] });
-var SYMBOLS = ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA", "META", "GOOGL", "SPY"];
+var SYMBOLS = [
+  "AAPL",
+  "MSFT",
+  "NVDA",
+  "AMZN",
+  "TSLA",
+  "META",
+  "GOOGL",
+  "SPY",
+  "QQQ",
+  "AMD",
+  "NFLX",
+  "JPM",
+  "XOM",
+  "UNH",
+  "COST",
+  "AVGO",
+  "CRM",
+  "ORCL"
+];
+var TRAIN_FRACTION = 0.65;
 var DECISION_TIMES_ET = [10.25, 11, 13.75];
 function calcEMA(values, period) {
   if (values.length < period) return values.map(() => NaN);
@@ -33784,8 +33828,10 @@ async function backtestSymbol(symbol) {
     byDay.get(key).push(b);
   }
   const days = [...byDay.keys()].sort();
+  const splitIdx = Math.floor(days.length * TRAIN_FRACTION);
   const MIN_DAILY_HISTORY = 25;
-  for (const day of days) {
+  for (const [dayIdx, day] of days.entries()) {
+    const phase = dayIdx < splitIdx ? "train" : "test";
     const dayBars = byDay.get(day).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     if (dayBars.length < 20) continue;
     const dayMidnightUTC = /* @__PURE__ */ new Date(`${day}T00:00:00.000Z`);
@@ -33872,6 +33918,8 @@ async function backtestSymbol(symbol) {
           const lastClose = remaining.length ? remaining[remaining.length - 1].close : spot;
           const risk = setup.riskPerShare ?? Math.abs(entryMid - setup.stopLoss);
           rMultiple = setup.bias === "long" ? (lastClose - entryMid) / risk : (entryMid - lastClose) / risk;
+          const cap = setup.rrRatio2 ?? setup.rrRatio1 * 1.5;
+          rMultiple = Math.max(-1.5, Math.min(rMultiple, cap));
         }
         trades.push({
           symbol,
@@ -33882,7 +33930,8 @@ async function backtestSymbol(symbol) {
           conviction: setup.confidence,
           rrRatio1: setup.rrRatio1,
           outcome,
-          rMultiple: +rMultiple.toFixed(2)
+          rMultiple: +rMultiple.toFixed(2),
+          phase
         });
       } catch (err) {
         errors2++;
@@ -33916,8 +33965,18 @@ function summarize(trades, groupBy) {
   }
   return rows.join("\n");
 }
+function stats(trades) {
+  const wins = trades.filter((t) => t.rMultiple > 0).length;
+  const losses = trades.filter((t) => t.rMultiple <= 0).length;
+  const winRate = trades.length ? wins / trades.length * 100 : 0;
+  const avgR = trades.length ? trades.reduce((s, t) => s + t.rMultiple, 0) / trades.length : 0;
+  const avgWinR = wins ? trades.filter((t) => t.rMultiple > 0).reduce((s, t) => s + t.rMultiple, 0) / wins : 0;
+  const avgLossR = losses ? trades.filter((t) => t.rMultiple <= 0).reduce((s, t) => s + t.rMultiple, 0) / losses : 0;
+  return { n: trades.length, wins, losses, winRate, avgR, avgWinR, avgLossR };
+}
+var MIN_TRAIN_N = 12;
 async function main() {
-  console.log(`Backtesting ${SYMBOLS.length} symbols across ${DECISION_TIMES_ET.length} daily decision windows...
+  console.log(`Backtesting ${SYMBOLS.length} symbols across ${DECISION_TIMES_ET.length} daily decision windows (walk-forward ${Math.round(TRAIN_FRACTION * 100)}/${Math.round((1 - TRAIN_FRACTION) * 100)} train/test split)...
 `);
   const allTrades = [];
   let totalNoTrade = 0;
@@ -33930,59 +33989,94 @@ async function main() {
     totalErrors += errors2;
     console.log(` ${trades.length} trades, ${noTradeCount} filtered no-trade`);
   }
-  const wins = allTrades.filter((t) => t.rMultiple > 0).length;
-  const losses = allTrades.filter((t) => t.rMultiple <= 0).length;
-  const winRate = allTrades.length ? wins / allTrades.length * 100 : 0;
-  const avgR = allTrades.length ? allTrades.reduce((s, t) => s + t.rMultiple, 0) / allTrades.length : 0;
-  const avgWinR = wins ? allTrades.filter((t) => t.rMultiple > 0).reduce((s, t) => s + t.rMultiple, 0) / wins : 0;
-  const avgLossR = losses ? allTrades.filter((t) => t.rMultiple <= 0).reduce((s, t) => s + t.rMultiple, 0) / losses : 0;
+  const trainTrades = allTrades.filter((t) => t.phase === "train");
+  const testTrades = allTrades.filter((t) => t.phase === "test");
+  const byType = /* @__PURE__ */ new Map();
+  for (const t of trainTrades) {
+    if (!byType.has(t.setupType)) byType.set(t.setupType, []);
+    byType.get(t.setupType).push(t);
+  }
+  const allowlist = /* @__PURE__ */ new Set();
+  const typeVerdicts = [];
+  for (const [type, ts] of [...byType.entries()].sort()) {
+    const s = stats(ts);
+    const allowed = s.n >= MIN_TRAIN_N && s.avgR > 0;
+    if (allowed) allowlist.add(type);
+    typeVerdicts.push(
+      `| ${type} | ${s.n} | ${s.winRate.toFixed(1)}% | ${s.avgR >= 0 ? "+" : ""}${s.avgR.toFixed(2)}R | ${allowed ? "\u2705 ALLOWED" : s.n < MIN_TRAIN_N ? "\u26D4 insufficient data" : "\u26D4 negative edge"} |`
+    );
+  }
+  const testUnfiltered = stats(testTrades);
+  const testFiltered = stats(testTrades.filter((t) => allowlist.has(t.setupType)));
+  const trainOverall = stats(trainTrades);
   const report = `# Intraday Signal Engine \u2014 Backtest Report
 
 Generated: ${(/* @__PURE__ */ new Date()).toISOString()}
 
 ## Methodology
-- Symbols: ${SYMBOLS.join(", ")}
+- Symbols (${SYMBOLS.length}): ${SYMBOLS.join(", ")}
 - Data: Yahoo Finance 5m bars (~58 days, no pre/post market) + 1d bars (~150 days) for PDH/PDL/ATR/avg-volume
 - Decision windows tested per trading day (ET): ${DECISION_TIMES_ET.map((t) => `${Math.floor(t)}:${String(Math.round(t % 1 * 60)).padStart(2, "0")}`).join(", ")}
 - Uses the exact production code path: \`computeIntradayLevels\` \u2192 \`computeIntradaySignals\` \u2192 \`generateTradeSetup\`
+- **Walk-forward split**: first ${Math.round(TRAIN_FRACTION * 100)}% of each symbol's trading days = TRAIN (used only to derive the setup-type quality gate below), last ${Math.round((1 - TRAIN_FRACTION) * 100)}% = TEST (held out, scored with the gate frozen from TRAIN \u2014 this is genuine out-of-sample evidence, not a re-fit)
 - Trade outcome: simulated bar-by-bar until stop or target1 hit, or scored mark-to-close if neither hit by session end
 - **No commissions, spread, or slippage modeled.** Pre-market signals are inactive in this backtest (Yahoo 5m history excludes pre/post bars) \u2014 they are live in production, which uses 1m bars with pre/post included.
 
-## Overall Results
-- Total setups generated: ${allTrades.length}
-- Filtered as no-trade (incl. new R:R quality filter): ${totalNoTrade}
-- Fetch/compute errors: ${totalErrors}
-- Win rate: **${winRate.toFixed(1)}%**
-- Average R-multiple per trade: **${avgR >= 0 ? "+" : ""}${avgR.toFixed(2)}R**
-- Average winner: +${avgWinR.toFixed(2)}R \u2014 Average loser: ${avgLossR.toFixed(2)}R
-- Expectancy: ${avgR >= 0 ? "positive" : "negative"} (${avgR >= 0 ? "the system's average R is above breakeven" : "the system is currently losing on average across this sample"})
+## Setup-Type Quality Gate (derived from TRAIN only, N \u2265 ${MIN_TRAIN_N})
+| Setup Type | N (train) | Win Rate | Avg R | Verdict |
+|---|---|---|---|---|
+${typeVerdicts.join("\n")}
 
-## By Setup Type
+**Allowed setup types (shipped to production):** ${[...allowlist].join(", ") || "none met the bar"}
+
+## TRAIN Results (in-sample \u2014 for reference only, not evidence)
+- N=${trainOverall.n}, win rate ${trainOverall.winRate.toFixed(1)}%, avg ${trainOverall.avgR >= 0 ? "+" : ""}${trainOverall.avgR.toFixed(2)}R
+
+## TEST Results (held-out \u2014 this is the real evidence)
+| | N | Win Rate | Avg R |
+|---|---|---|---|
+| Unfiltered (all setup types) | ${testUnfiltered.n} | ${testUnfiltered.winRate.toFixed(1)}% | ${testUnfiltered.avgR >= 0 ? "+" : ""}${testUnfiltered.avgR.toFixed(2)}R |
+| **With quality gate applied** | ${testFiltered.n} | **${testFiltered.winRate.toFixed(1)}%** | **${testFiltered.avgR >= 0 ? "+" : ""}${testFiltered.avgR.toFixed(2)}R** |
+
+Filtering out setup types that showed negative or unreliable edge on TRAIN, and re-scoring only
+on TEST (data the gate never saw), moved win rate from ${testUnfiltered.winRate.toFixed(1)}% to
+${testFiltered.winRate.toFixed(1)}% and average R from ${testUnfiltered.avgR.toFixed(2)}R to ${testFiltered.avgR.toFixed(2)}R.
+${testFiltered.avgR > testUnfiltered.avgR ? "The gate improved out-of-sample expectancy." : "The gate did NOT clearly improve out-of-sample expectancy \u2014 treat the allowlist as provisional, not proven."}
+
+## Full Breakdown (all trades, both phases combined)
+### By Setup Type
 | Setup Type | N | Win Rate | Avg R |
 |---|---|---|---|
 ${summarize(allTrades, (t) => t.setupType)}
 
-## By Conviction Bucket
+### By Conviction Bucket
 | Conviction | N | Win Rate | Avg R |
 |---|---|---|---|
 ${summarize(allTrades, (t) => bucketConviction(t.conviction))}
 
-## By Bias
+### By Bias
 | Bias | N | Win Rate | Avg R |
 |---|---|---|---|
 ${summarize(allTrades, (t) => t.bias)}
 
+## Operational Stats
+- Total setups generated: ${allTrades.length}
+- Filtered as no-trade (conviction/R:R gates, before the setup-type gate): ${totalNoTrade}
+- Fetch/compute errors: ${totalErrors}
+
 ## Caveats (read before acting on this)
-This is a **starting point**, not statistical proof. With ~${SYMBOLS.length} symbols \xD7 ~45 usable days \xD7 ${DECISION_TIMES_ET.length} windows,
-the sample is too small to confirm or reject the signal weights with confidence \u2014 treat it as
-"does this look directionally sane" rather than "this is validated." To get real evidence:
-increase symbol count and history length, add walk-forward validation (don't reuse the same
-period to tune and test), and eventually paper-trade before risking capital.
+This is walk-forward evidence, which is meaningfully stronger than a single in-sample run \u2014 but
+the TEST sample (~${testTrades.length} trades) is still modest. Treat the setup-type gate as
+**provisional and subject to revision** as more data accrues; rerun \`pnpm run backtest\` monthly
+and update \`EMPIRICAL_SETUP_ALLOWLIST\` in \`intraday-signals.ts\` from the new TRAIN verdicts.
+No backtest \u2014 however rigorous \u2014 is a substitute for paper-trading before risking real capital,
+because live fills, slippage, and regime changes are not captured here.
 `;
   const fs = await import("node:fs/promises");
   await fs.writeFile(new URL("../../BACKTEST_REPORT.md", import.meta.url), report);
   console.log("\n" + report);
   console.log("\nFull report written to artifacts/api-server/BACKTEST_REPORT.md");
+  console.log("\nALLOWLIST_JSON=" + JSON.stringify([...allowlist]));
 }
 main().catch((err) => {
   console.error(err);

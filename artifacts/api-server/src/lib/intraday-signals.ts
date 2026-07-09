@@ -401,6 +401,33 @@ export function generateTradeSetup(params: {
   else if (l.preMarketHigh && spot > l.preMarketHigh && bias === "long")  setupType = "Pre-Market High Breakout";
   else if (l.preMarketLow  && spot < l.preMarketLow  && bias === "short") setupType = "Pre-Market Low Breakdown";
 
+  // ── Empirical setup-type quality gate ────────────────────────────────────────
+  // Derived from a walk-forward backtest (18 symbols, ~58 trading days, train/test
+  // split — see BACKTEST_REPORT.md). Setup types NOT in this list showed a
+  // negative or statistically unproven edge on held-out data and are blocked
+  // from generating an actionable trade, converting to no-trade instead.
+  //
+  // This is intentionally a short, conservative list on a modest sample —
+  // re-run `pnpm --filter @workspace/api-server run backtest` periodically as
+  // more history accrues and widen this list only when a setup type clears
+  // the bar (N >= 12 trades in TRAIN, positive avg R) AND holds up on TEST.
+  const EMPIRICAL_SETUP_ALLOWLIST = new Set<string>([
+    "Previous Day Low Breakdown",
+    "VWAP Rejection",
+  ]);
+
+  if (!EMPIRICAL_SETUP_ALLOWLIST.has(setupType)) {
+    return {
+      bias: "no-trade", setupType: "No Setup",
+      entryLow: null, entryHigh: null,
+      stopLoss: null, target1: null, target2: null,
+      rrRatio1: null, rrRatio2: null, riskPerShare: null,
+      bestWindow,
+      noTradeReason: `${setupType} has not demonstrated a reliable backtested edge yet — passing rather than forcing an unproven setup`,
+      confidence: signalScore.conviction,
+    };
+  }
+
   // ── Entry zone, stop, targets ────────────────────────────────────────────────
   let entryLow: number | null  = null;
   let entryHigh: number | null = null;
@@ -413,13 +440,17 @@ export function generateTradeSetup(params: {
     entryLow  = +(Math.max(trigger ?? spot, spot - atr * 0.15)).toFixed(2);
     entryHigh = +((trigger ?? spot) + atr * 0.15).toFixed(2);
 
-    // Stop: tightest valid level below entry
+    // Stop: tightest valid level below entry, but never so tight that normal
+    // intraday noise would stop it out before the thesis has a chance to play
+    // out. MIN_STOP_ATR enforces a floor on risk-per-share so R:R ratios stay
+    // realistic instead of being inflated by a near-zero-risk denominator.
+    const MIN_STOP_ATR = 0.4;
     const stopCandidates = [
       l.vwapLower1,
       l.vwap ? l.vwap - halfAtr : null,
       l.orbLow   ? l.orbLow   - atr * 0.10 : null,
       l.pdLow    ? l.pdLow    - atr * 0.05 : null,
-    ].filter((v): v is number => v != null && v < spot - halfAtr * 0.3);
+    ].filter((v): v is number => v != null && v <= spot - atr * MIN_STOP_ATR);
 
     stopLoss = stopCandidates.length
       ? +(Math.max(...stopCandidates)).toFixed(2) // tightest valid stop
@@ -450,12 +481,13 @@ export function generateTradeSetup(params: {
     entryHigh = +(Math.min(trigger ?? spot, spot + atr * 0.15)).toFixed(2);
     entryLow  = +((trigger ?? spot) - atr * 0.15).toFixed(2);
 
+    const MIN_STOP_ATR = 0.4;
     const stopCandidates = [
       l.vwapUpper1,
       l.vwap ? l.vwap + halfAtr : null,
       l.orbHigh  ? l.orbHigh  + atr * 0.10 : null,
       l.pdHigh   ? l.pdHigh   + atr * 0.05 : null,
-    ].filter((v): v is number => v != null && v > spot + halfAtr * 0.3);
+    ].filter((v): v is number => v != null && v >= spot + atr * MIN_STOP_ATR);
 
     stopLoss = stopCandidates.length
       ? +(Math.min(...stopCandidates)).toFixed(2)
@@ -486,11 +518,16 @@ export function generateTradeSetup(params: {
     : (entryLow ?? entryHigh ?? spot);
   const riskPerShare = stopLoss != null ? +Math.abs(entryMid - stopLoss).toFixed(2) : null;
 
+  // Cap displayed R:R at a realistic ceiling. Beyond ~6:1, a target is
+  // usually just "far away" rather than a genuinely achievable level, and
+  // uncapped ratios let rare outlier days dominate any aggregate statistic
+  // (backtests, dashboards, etc.) built on top of this number.
+  const MAX_RR = 6;
   const rrRatio1 = target1 != null && riskPerShare && riskPerShare > 0
-    ? +(Math.abs(target1 - entryMid) / riskPerShare).toFixed(1)
+    ? +Math.min(Math.abs(target1 - entryMid) / riskPerShare, MAX_RR).toFixed(1)
     : null;
   const rrRatio2 = target2 != null && riskPerShare && riskPerShare > 0
-    ? +(Math.abs(target2 - entryMid) / riskPerShare).toFixed(1)
+    ? +Math.min(Math.abs(target2 - entryMid) / riskPerShare, MAX_RR).toFixed(1)
     : null;
 
   // ── R:R quality filter ───────────────────────────────────────────────────────

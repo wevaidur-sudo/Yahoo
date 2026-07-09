@@ -33558,8 +33558,12 @@ function computeIntradaySignals(params) {
   }
   return { direction, conviction, bullishCount, bearishCount, neutralCount, noTradeReason, signals };
 }
+var EMPIRICAL_ALLOWED_SETUP_TYPES = [
+  "Previous Day Low Breakdown",
+  "VWAP Rejection"
+];
 function generateTradeSetup(params) {
-  const { spot, levels: l, signalScore, now } = params;
+  const { spot, levels: l, signalScore, now, bypassEmpiricalGate } = params;
   const offset = getETOffset(now);
   const etDecimal = (now.getUTCHours() - offset + 24) % 24 + now.getUTCMinutes() / 60;
   const bestWindow = etDecimal < 9.5 ? "Pre-market \u2014 plan now, execute at 9:30 ET open" : etDecimal < 10.25 ? "9:30\u201310:15 ET \u2014 opening momentum window (highest-probability entries)" : etDecimal < 11.5 ? "10:15\u201311:30 ET \u2014 late morning; wait for clean ORB retest or VWAP reclaim" : etDecimal < 13.5 ? "11:30\u201313:30 ET \u2014 midday doldrums; reduce size, avoid new positions" : etDecimal < 14.5 ? "13:30\u201314:30 ET \u2014 afternoon re-entry; VWAP reclaim setups preferred" : etDecimal < 16 ? "14:30\u201316:00 ET \u2014 power hour; strong trend resumption plays" : "After-hours \u2014 market closed; plan for tomorrow's open";
@@ -33581,22 +33585,57 @@ function generateTradeSetup(params) {
     };
   }
   const bias = signalScore.direction === "bullish" ? "long" : "short";
-  const atr = l.intradayAtr ?? +(spot * 0.015).toFixed(2);
+  const rawAtr = l.intradayAtr ?? +(spot * 0.015).toFixed(2);
+  if (!(rawAtr > 0)) {
+    return {
+      bias: "no-trade",
+      setupType: "No Setup",
+      entryLow: null,
+      entryHigh: null,
+      stopLoss: null,
+      target1: null,
+      target2: null,
+      rrRatio1: null,
+      rrRatio2: null,
+      riskPerShare: null,
+      bestWindow,
+      noTradeReason: "Volatility (ATR) read is invalid \u2014 cannot size a safe stop/target",
+      confidence: signalScore.conviction
+    };
+  }
+  const atr = rawAtr;
   const halfAtr = atr / 2;
   let setupType = "VWAP Trend " + (bias === "long" ? "Long" : "Short");
-  if (l.orbBroken === "up" && bias === "long") setupType = "ORB Breakout";
-  else if (l.orbBroken === "down" && bias === "short") setupType = "ORB Breakdown";
-  else if (l.vwap && Math.abs(spot - l.vwap) / l.vwap < 3e-3 && bias === "long") setupType = "VWAP Reclaim";
-  else if (l.vwap && Math.abs(spot - l.vwap) / l.vwap < 3e-3 && bias === "short") setupType = "VWAP Rejection";
-  else if (l.pdHigh && spot > l.pdHigh && bias === "long") setupType = "Previous Day High Breakout";
+  if (l.pdHigh && spot > l.pdHigh && bias === "long") setupType = "Previous Day High Breakout";
   else if (l.pdLow && spot < l.pdLow && bias === "short") setupType = "Previous Day Low Breakdown";
   else if (l.preMarketHigh && spot > l.preMarketHigh && bias === "long") setupType = "Pre-Market High Breakout";
   else if (l.preMarketLow && spot < l.preMarketLow && bias === "short") setupType = "Pre-Market Low Breakdown";
-  const EMPIRICAL_SETUP_ALLOWLIST = /* @__PURE__ */ new Set([
-    "Previous Day Low Breakdown",
-    "VWAP Rejection"
-  ]);
-  if (!EMPIRICAL_SETUP_ALLOWLIST.has(setupType)) {
+  else if (l.orbBroken === "up" && bias === "long") setupType = "ORB Breakout";
+  else if (l.orbBroken === "down" && bias === "short") setupType = "ORB Breakdown";
+  else if (l.vwap && Math.abs(spot - l.vwap) / l.vwap < 3e-3 && bias === "long") setupType = "VWAP Reclaim";
+  else if (l.vwap && Math.abs(spot - l.vwap) / l.vwap < 3e-3 && bias === "short") setupType = "VWAP Rejection";
+  const triggerLevel = setupType === "ORB Breakout" ? l.orbHigh : setupType === "ORB Breakdown" ? l.orbLow : setupType === "Previous Day High Breakout" ? l.pdHigh : setupType === "Previous Day Low Breakdown" ? l.pdLow : setupType === "Pre-Market High Breakout" ? l.preMarketHigh : setupType === "Pre-Market Low Breakdown" ? l.preMarketLow : l.vwap ?? spot;
+  const MAX_CHASE_ATR = 0.5;
+  const extension = bias === "long" ? triggerLevel != null ? (spot - triggerLevel) / atr : 0 : triggerLevel != null ? (triggerLevel - spot) / atr : 0;
+  if (triggerLevel != null && extension > MAX_CHASE_ATR) {
+    return {
+      bias: "no-trade",
+      setupType: "No Setup",
+      entryLow: null,
+      entryHigh: null,
+      stopLoss: null,
+      target1: null,
+      target2: null,
+      rrRatio1: null,
+      rrRatio2: null,
+      riskPerShare: null,
+      bestWindow,
+      noTradeReason: `${setupType} trigger already ${extension.toFixed(1)}x ATR behind price \u2014 too extended to chase, wait for a pullback/retest`,
+      confidence: signalScore.conviction
+    };
+  }
+  const EMPIRICAL_SETUP_ALLOWLIST = new Set(EMPIRICAL_ALLOWED_SETUP_TYPES);
+  if (!bypassEmpiricalGate && !EMPIRICAL_SETUP_ALLOWLIST.has(setupType)) {
     return {
       bias: "no-trade",
       setupType: "No Setup",
@@ -33618,54 +33657,53 @@ function generateTradeSetup(params) {
   let stopLoss = null;
   let target1 = null;
   let target2 = null;
+  const trig = triggerLevel ?? spot;
   if (bias === "long") {
-    const trigger = l.orbBroken === "up" ? l.orbHigh : l.vwap ?? spot;
-    entryLow = +Math.max(trigger ?? spot, spot - atr * 0.15).toFixed(2);
-    entryHigh = +((trigger ?? spot) + atr * 0.15).toFixed(2);
+    entryLow = +Math.min(trig - atr * 0.1, trig).toFixed(2);
+    entryHigh = +Math.max(trig + atr * 0.15, trig).toFixed(2);
     const MIN_STOP_ATR = 0.4;
     const stopCandidates = [
       l.vwapLower1,
       l.vwap ? l.vwap - halfAtr : null,
       l.orbLow ? l.orbLow - atr * 0.1 : null,
       l.pdLow ? l.pdLow - atr * 0.05 : null
-    ].filter((v) => v != null && v <= spot - atr * MIN_STOP_ATR);
-    stopLoss = stopCandidates.length ? +Math.max(...stopCandidates).toFixed(2) : +(spot - atr * 0.75).toFixed(2);
+    ].filter((v) => v != null && v <= entryLow - atr * MIN_STOP_ATR);
+    stopLoss = stopCandidates.length ? +Math.max(...stopCandidates).toFixed(2) : +(entryLow - atr * 0.75).toFixed(2);
     const t1Candidates = [
       l.orbHigh && l.orbRange ? l.orbHigh + l.orbRange : null,
       l.pdHigh && spot < l.pdHigh ? l.pdHigh : null,
       l.preMarketHigh && spot < l.preMarketHigh ? l.preMarketHigh : null,
       l.vwapUpper1
-    ].filter((v) => v != null && v > (entryHigh ?? spot) + halfAtr * 0.5);
-    target1 = t1Candidates.length ? +Math.min(...t1Candidates).toFixed(2) : +(spot + atr * 1.5).toFixed(2);
+    ].filter((v) => v != null && v > entryHigh + halfAtr * 0.5);
+    target1 = t1Candidates.length ? +Math.min(...t1Candidates).toFixed(2) : +(entryHigh + atr * 1.5).toFixed(2);
     const t2Candidates = [
       l.orbHigh && l.orbRange ? l.orbHigh + l.orbRange * 2 : null,
       l.vwapUpper2
     ].filter((v) => v != null && v > (target1 ?? spot) + halfAtr * 0.5);
-    target2 = t2Candidates.length ? +Math.min(...t2Candidates).toFixed(2) : +(spot + atr * 2.5).toFixed(2);
+    target2 = t2Candidates.length ? +Math.min(...t2Candidates).toFixed(2) : +(entryHigh + atr * 2.5).toFixed(2);
   } else {
-    const trigger = l.orbBroken === "down" ? l.orbLow : l.vwap ?? spot;
-    entryHigh = +Math.min(trigger ?? spot, spot + atr * 0.15).toFixed(2);
-    entryLow = +((trigger ?? spot) - atr * 0.15).toFixed(2);
+    entryHigh = +Math.max(trig + atr * 0.1, trig).toFixed(2);
+    entryLow = +Math.min(trig - atr * 0.15, trig).toFixed(2);
     const MIN_STOP_ATR = 0.4;
     const stopCandidates = [
       l.vwapUpper1,
       l.vwap ? l.vwap + halfAtr : null,
       l.orbHigh ? l.orbHigh + atr * 0.1 : null,
       l.pdHigh ? l.pdHigh + atr * 0.05 : null
-    ].filter((v) => v != null && v >= spot + atr * MIN_STOP_ATR);
-    stopLoss = stopCandidates.length ? +Math.min(...stopCandidates).toFixed(2) : +(spot + atr * 0.75).toFixed(2);
+    ].filter((v) => v != null && v >= entryHigh + atr * MIN_STOP_ATR);
+    stopLoss = stopCandidates.length ? +Math.min(...stopCandidates).toFixed(2) : +(entryHigh + atr * 0.75).toFixed(2);
     const t1Candidates = [
       l.orbLow && l.orbRange ? l.orbLow - l.orbRange : null,
       l.pdLow && spot > l.pdLow ? l.pdLow : null,
       l.preMarketLow && spot > l.preMarketLow ? l.preMarketLow : null,
       l.vwapLower1
-    ].filter((v) => v != null && v < (entryLow ?? spot) - halfAtr * 0.5);
-    target1 = t1Candidates.length ? +Math.max(...t1Candidates).toFixed(2) : +(spot - atr * 1.5).toFixed(2);
+    ].filter((v) => v != null && v < entryLow - halfAtr * 0.5);
+    target1 = t1Candidates.length ? +Math.max(...t1Candidates).toFixed(2) : +(entryLow - atr * 1.5).toFixed(2);
     const t2Candidates = [
       l.orbLow && l.orbRange ? l.orbLow - l.orbRange * 2 : null,
       l.vwapLower2
     ].filter((v) => v != null && v < (target1 ?? spot) - halfAtr * 0.5);
-    target2 = t2Candidates.length ? +Math.max(...t2Candidates).toFixed(2) : +(spot - atr * 2.5).toFixed(2);
+    target2 = t2Candidates.length ? +Math.max(...t2Candidates).toFixed(2) : +(entryLow - atr * 2.5).toFixed(2);
   }
   const entryMid = entryLow != null && entryHigh != null ? (entryLow + entryHigh) / 2 : entryLow ?? entryHigh ?? spot;
   const riskPerShare = stopLoss != null ? +Math.abs(entryMid - stopLoss).toFixed(2) : null;
@@ -33866,16 +33904,30 @@ async function backtestSymbol(symbol) {
           macdHistogram15m,
           dayChange: levels.sessionOpen != null ? (spot - levels.sessionOpen) / levels.sessionOpen * 100 : null
         });
-        const setup = generateTradeSetup({ spot, levels, signalScore, now });
+        const setup = generateTradeSetup({
+          spot,
+          levels,
+          signalScore,
+          now,
+          bypassEmpiricalGate: true
+        });
         if (setup.bias === "no-trade" || setup.entryLow == null || setup.entryHigh == null || setup.stopLoss == null || setup.target1 == null || setup.rrRatio1 == null) {
           noTradeCount++;
           continue;
         }
         const entryMid = (setup.entryLow + setup.entryHigh) / 2;
         const remaining = dayBars.filter((b) => b.timestamp > now);
+        const fillIdx = remaining.findIndex(
+          (b) => b.low <= setup.entryHigh && b.high >= setup.entryLow
+        );
+        if (fillIdx === -1) {
+          noTradeCount++;
+          continue;
+        }
+        const postFill = remaining.slice(fillIdx);
         let outcome = "open-at-close";
         let rMultiple = 0;
-        for (const bar of remaining) {
+        for (const bar of postFill) {
           if (setup.bias === "long") {
             const hitStop = bar.low <= setup.stopLoss;
             const hitTarget = bar.high >= setup.target1;
@@ -33915,7 +33967,7 @@ async function backtestSymbol(symbol) {
           }
         }
         if (outcome === "open-at-close") {
-          const lastClose = remaining.length ? remaining[remaining.length - 1].close : spot;
+          const lastClose = postFill.length ? postFill[postFill.length - 1].close : spot;
           const risk = setup.riskPerShare ?? Math.abs(entryMid - setup.stopLoss);
           rMultiple = setup.bias === "long" ? (lastClose - entryMid) / risk : (entryMid - lastClose) / risk;
           const cap = setup.rrRatio2 ?? setup.rrRatio1 * 1.5;

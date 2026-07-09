@@ -1,6 +1,6 @@
 # Intraday Signal Engine — Backtest Report
 
-Generated: 2026-07-09T17:26:27.264Z
+Generated: 2026-07-09T17:36:59.786Z
 
 ## Methodology
 - Symbols (18): AAPL, MSFT, NVDA, AMZN, TSLA, META, GOOGL, SPY, QQQ, AMD, NFLX, JPM, XOM, UNH, COST, AVGO, CRM, ORCL
@@ -14,53 +14,70 @@ Generated: 2026-07-09T17:26:27.264Z
 ## Setup-Type Quality Gate (derived from TRAIN only, N ≥ 12)
 | Setup Type | N (train) | Win Rate | Avg R | Verdict |
 |---|---|---|---|---|
-| Previous Day Low Breakdown | 31 | 41.9% | +0.08R | ✅ ALLOWED |
-| VWAP Rejection | 44 | 54.5% | +0.08R | ✅ ALLOWED |
+| ORB Breakdown | 37 | 29.7% | -0.16R | ⛔ negative edge |
+| ORB Breakout | 61 | 23.0% | -0.41R | ⛔ negative edge |
+| Pre-Market High Breakout | 52 | 50.0% | -0.03R | ⛔ negative edge |
+| Pre-Market Low Breakdown | 43 | 55.8% | +0.18R | ✅ ALLOWED |
+| Previous Day High Breakout | 81 | 38.3% | -0.30R | ⛔ negative edge |
+| Previous Day Low Breakdown | 76 | 65.8% | +0.48R | ✅ ALLOWED |
+| VWAP Reclaim | 6 | 16.7% | -0.55R | ⛔ insufficient data |
+| VWAP Rejection | 12 | 50.0% | +0.03R | ✅ ALLOWED |
+| VWAP Trend Long | 7 | 42.9% | +0.10R | ⛔ insufficient data |
+| VWAP Trend Short | 15 | 40.0% | -0.34R | ⛔ negative edge |
 
-**Allowed setup types (shipped to production):** Previous Day Low Breakdown, VWAP Rejection
+**Allowed setup types (shipped to production):** Pre-Market Low Breakdown, Previous Day Low Breakdown, VWAP Rejection
 
 ## TRAIN Results (in-sample — for reference only, not evidence)
-- N=75, win rate 49.3%, avg +0.08R
+- N=390, win rate 44.1%, avg -0.05R
 
 ## TEST Results (held-out — this is the real evidence)
 | | N | Win Rate | Avg R |
 |---|---|---|---|
-| Unfiltered (all setup types) | 50 | 50.0% | +0.08R |
-| **With quality gate applied** | 50 | **50.0%** | **+0.08R** |
+| Unfiltered (all setup types) | 187 | 36.9% | -0.18R |
+| **With quality gate applied** | 61 | **41.0%** | **-0.08R** |
 
 Filtering out setup types that showed negative or unreliable edge on TRAIN, and re-scoring only
-on TEST (data the gate never saw), moved win rate from 50.0% to
-50.0% and average R from 0.08R to 0.08R.
-The gate did NOT clearly improve out-of-sample expectancy — treat the allowlist as provisional, not proven.
+on TEST (data the gate never saw), moved win rate from 36.9% to
+41.0% and average R from -0.18R to -0.08R.
+The gate improved out-of-sample expectancy.
 
 ## Full Breakdown (all trades, both phases combined)
 ### By Setup Type
 | Setup Type | N | Win Rate | Avg R |
 |---|---|---|---|
-| Previous Day Low Breakdown | 63 | 46.0% | +0.16R |
-| VWAP Rejection | 62 | 53.2% | -0.00R |
+| ORB Breakdown | 53 | 32.1% | -0.13R |
+| ORB Breakout | 91 | 19.8% | -0.44R |
+| Pre-Market High Breakout | 66 | 50.0% | +0.03R |
+| Pre-Market Low Breakdown | 63 | 50.8% | +0.14R |
+| Previous Day High Breakout | 130 | 36.9% | -0.31R |
+| Previous Day Low Breakdown | 113 | 56.6% | +0.26R |
+| VWAP Reclaim | 10 | 20.0% | -0.62R |
+| VWAP Rejection | 16 | 56.3% | +0.06R |
+| VWAP Trend Long | 13 | 61.5% | +0.19R |
+| VWAP Trend Short | 22 | 45.5% | -0.18R |
 
 ### By Conviction Bucket
 | Conviction | N | Win Rate | Avg R |
 |---|---|---|---|
-| 25-40 | 17 | 52.9% | -0.05R |
-| 40-60 | 52 | 44.2% | +0.10R |
-| 60-80 | 23 | 47.8% | +0.09R |
-| 80-100 | 33 | 57.6% | +0.10R |
+| 25-40 | 42 | 47.6% | -0.07R |
+| 40-60 | 83 | 44.6% | +0.09R |
+| 60-80 | 38 | 31.6% | -0.17R |
+| 80-100 | 414 | 41.5% | -0.12R |
 
 ### By Bias
 | Bias | N | Win Rate | Avg R |
 |---|---|---|---|
-| short | 125 | 49.6% | +0.08R |
+| long | 310 | 35.2% | -0.26R |
+| short | 267 | 49.4% | +0.11R |
 
 ## Operational Stats
-- Total setups generated: 125
-- Filtered as no-trade (conviction/R:R gates, before the setup-type gate): 1999
+- Total setups generated: 577
+- Filtered as no-trade (conviction/R:R gates, before the setup-type gate): 1529
 - Fetch/compute errors: 0
 
 ## Caveats (read before acting on this)
 This is walk-forward evidence, which is meaningfully stronger than a single in-sample run — but
-the TEST sample (~50 trades) is still modest. Treat the setup-type gate as
+the TEST sample (~187 trades) is still modest. Treat the setup-type gate as
 **provisional and subject to revision** as more data accrues; rerun `pnpm run backtest` monthly
 and update `EMPIRICAL_SETUP_ALLOWLIST` in `intraday-signals.ts` from the new TRAIN verdicts.
 No backtest — however rigorous — is a substitute for paper-trading before risking real capital,

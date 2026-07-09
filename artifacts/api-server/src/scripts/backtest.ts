@@ -225,7 +225,16 @@ async function backtestSymbol(symbol: string): Promise<{ trades: TradeResult[]; 
           dayChange: levels.sessionOpen != null ? ((spot - levels.sessionOpen) / levels.sessionOpen) * 100 : null,
         });
 
-        const setup = generateTradeSetup({ spot, levels, signalScore, now });
+        // Always measure against the FULL setup-type universe here — the
+        // gate is derived FROM this measurement (on TRAIN) and then applied
+        // as a separate post-hoc filter when scoring TEST (see main()).
+        // Baking the production gate into generation during backtesting would
+        // be circular: it would silently exclude the very setup types being
+        // evaluated, on both TRAIN and TEST.
+        const setup = generateTradeSetup({
+          spot, levels, signalScore, now,
+          bypassEmpiricalGate: true,
+        });
 
         if (setup.bias === "no-trade" || setup.entryLow == null || setup.entryHigh == null ||
             setup.stopLoss == null || setup.target1 == null || setup.rrRatio1 == null) {
@@ -236,10 +245,23 @@ async function backtestSymbol(symbol: string): Promise<{ trades: TradeResult[]; 
         const entryMid = (setup.entryLow + setup.entryHigh) / 2;
         const remaining = dayBars.filter((b) => b.timestamp > now);
 
+        // Require an actual touch of the entry zone before tracking stop/target
+        // — entry zones are often a pullback/retest band, not "fill immediately
+        // at the current price." A setup that never gets filled never became a
+        // real trade and must not be scored as one.
+        const fillIdx = remaining.findIndex(
+          (b) => b.low <= setup.entryHigh! && b.high >= setup.entryLow!,
+        );
+        if (fillIdx === -1) {
+          noTradeCount++; // never filled — not a real trade, excluded from R stats
+          continue;
+        }
+        const postFill = remaining.slice(fillIdx);
+
         let outcome: TradeResult["outcome"] = "open-at-close";
         let rMultiple = 0;
 
-        for (const bar of remaining) {
+        for (const bar of postFill) {
           if (setup.bias === "long") {
             const hitStop = bar.low <= setup.stopLoss;
             const hitTarget = bar.high >= setup.target1;
@@ -256,7 +278,7 @@ async function backtestSymbol(symbol: string): Promise<{ trades: TradeResult[]; 
         }
 
         if (outcome === "open-at-close") {
-          const lastClose = remaining.length ? remaining[remaining.length - 1].close : spot;
+          const lastClose = postFill.length ? postFill[postFill.length - 1].close : spot;
           const risk = setup.riskPerShare ?? Math.abs(entryMid - setup.stopLoss);
           rMultiple = setup.bias === "long"
             ? (lastClose - entryMid) / risk

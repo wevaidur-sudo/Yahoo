@@ -1,4 +1,5 @@
 - [AI Analysis Architecture](ai-analysis-architecture.md) — signal score is formula-based (deterministic), Gemini provides qualitative overlay only; score normalization uses fixed category weights in denominator even for neutral signals.
+- [Intraday backtest methodology](intraday-backtest-methodology.md) — walk-forward train/test split, require entry-zone fill, gate must never leak into its own training measurement, cap unresolved R at target2.
 - [Long-running jobs in this sandbox](long-jobs-in-sandbox.md) — background/detached processes get killed when a bash tool call returns; checkpoint long jobs (training, bulk fetch) into DB-persisted chunks instead.
 - [TS project references stale dist](ts-project-refs-stale-dist.md) — adding exports to a composite lib package can fail typecheck with a false "no exported member" until dependents are rebuilt via `tsc -b --force`.
 - [ML training progress tracking](training-progress-tracking.md) — progress counters must be 1-based ("done" units), and poll intervals should stop on terminal phases (done/error/idle).

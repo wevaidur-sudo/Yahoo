@@ -352,13 +352,38 @@ export function computeIntradaySignals(params: {
 
 // ─── Trade setup generator ─────────────────────────────────────────────────────
 
+// Setup types with a demonstrated edge on walk-forward backtest data (see
+// BACKTEST_REPORT.md). Re-run `pnpm --filter @workspace/api-server run backtest`
+// after any change to entry/stop/target logic and refresh this list from the
+// new TRAIN verdicts — it is only valid together with the specific entry logic
+// it was measured against.
+export const EMPIRICAL_ALLOWED_SETUP_TYPES: string[] = [
+  "Pre-Market Low Breakdown",
+  "Previous Day Low Breakdown",
+  "VWAP Rejection",
+];
+// Derived from a walk-forward backtest that: (1) evaluates every setup type
+// against a required entry-zone fill (no more "instant fill at decision
+// price"), (2) uses the corrected per-type trigger/chase-guard logic, and
+// (3) never lets the gate leak into the TRAIN measurement it's derived from.
+// Result: out-of-sample win rate 36.9% -> 41.0%, avg R -0.18R -> -0.08R.
+// All three allowed types are short-side only in this data window — see
+// BACKTEST_REPORT.md "Caveats" for the regime-dependence risk this implies.
+
 export function generateTradeSetup(params: {
   spot: number;
   levels: IntradayLevels;
   signalScore: IntradaySignalScore;
   now: Date;
+  /**
+   * Test-only escape hatch: skip the empirical setup-type gate so a backtest
+   * can measure ALL setup types on its TRAIN window (the gate is derived FROM
+   * that measurement, so applying it while measuring would be circular).
+   * Never set this in production call sites.
+   */
+  bypassEmpiricalGate?: boolean;
 }): TradeSetup {
-  const { spot, levels: l, signalScore, now } = params;
+  const { spot, levels: l, signalScore, now, bypassEmpiricalGate } = params;
 
   // ── Best entry window (Eastern Time) ─────────────────────────────────────────
   const offset    = getETOffset(now);
@@ -386,20 +411,82 @@ export function generateTradeSetup(params: {
     };
   }
 
-  const bias    = signalScore.direction === "bullish" ? "long" : "short";
-  const atr     = l.intradayAtr ?? +(spot * 0.015).toFixed(2); // fallback: ~1.5% of price
+  const bias = signalScore.direction === "bullish" ? "long" : "short";
+  // Guard against a zero/near-zero ATR (e.g. a symbol with a degenerate or
+  // missing volatility read) — dividing by it below would produce Infinity/NaN
+  // in the chase-guard and stop/target math instead of a clean no-trade.
+  const rawAtr = l.intradayAtr ?? +(spot * 0.015).toFixed(2);
+  if (!(rawAtr > 0)) {
+    return {
+      bias: "no-trade", setupType: "No Setup",
+      entryLow: null, entryHigh: null,
+      stopLoss: null, target1: null, target2: null,
+      rrRatio1: null, rrRatio2: null, riskPerShare: null,
+      bestWindow,
+      noTradeReason: "Volatility (ATR) read is invalid — cannot size a safe stop/target",
+      confidence: signalScore.conviction,
+    };
+  }
+  const atr     = rawAtr;
   const halfAtr = atr / 2;
 
   // ── Setup type ───────────────────────────────────────────────────────────────
+  // More specific reference levels (previous day / pre-market) are checked
+  // before the generic ORB label so a setup that lines up with a well-known
+  // level isn't silently reclassified as (and potentially gated out as) ORB.
   let setupType = "VWAP Trend " + (bias === "long" ? "Long" : "Short");
-  if (l.orbBroken === "up"   && bias === "long")  setupType = "ORB Breakout";
-  else if (l.orbBroken === "down" && bias === "short") setupType = "ORB Breakdown";
-  else if (l.vwap && Math.abs(spot - l.vwap) / l.vwap < 0.003 && bias === "long")  setupType = "VWAP Reclaim";
-  else if (l.vwap && Math.abs(spot - l.vwap) / l.vwap < 0.003 && bias === "short") setupType = "VWAP Rejection";
-  else if (l.pdHigh && spot > l.pdHigh && bias === "long")  setupType = "Previous Day High Breakout";
+  if (l.pdHigh && spot > l.pdHigh && bias === "long")  setupType = "Previous Day High Breakout";
   else if (l.pdLow  && spot < l.pdLow  && bias === "short") setupType = "Previous Day Low Breakdown";
   else if (l.preMarketHigh && spot > l.preMarketHigh && bias === "long")  setupType = "Pre-Market High Breakout";
   else if (l.preMarketLow  && spot < l.preMarketLow  && bias === "short") setupType = "Pre-Market Low Breakdown";
+  else if (l.orbBroken === "up"   && bias === "long")  setupType = "ORB Breakout";
+  else if (l.orbBroken === "down" && bias === "short") setupType = "ORB Breakdown";
+  else if (l.vwap && Math.abs(spot - l.vwap) / l.vwap < 0.003 && bias === "long")  setupType = "VWAP Reclaim";
+  else if (l.vwap && Math.abs(spot - l.vwap) / l.vwap < 0.003 && bias === "short") setupType = "VWAP Rejection";
+
+  // ── Root-cause fix: trigger level must match the classified setup type ───────
+  // BUG (found via backtest): entry anchoring only ever used orbHigh/orbLow or
+  // vwap/spot — never pdHigh/pdLow/preMarketHigh/Low — even when the setup was
+  // labeled "Previous Day High Breakout" etc. That mismatch fed a level into
+  // the entry math that had nothing to do with the setup being traded.
+  //
+  // A second, more serious bug: for confirmed breakouts (ORB in particular),
+  // by the time this runs (10:15/11:00/13:45, well after the 9:45 ORB break),
+  // price has often already run well past the trigger. The old formula
+  // (`entryLow = max(trigger, spot - 0.15*atr)`, `entryHigh = trigger + 0.15*atr`)
+  // could then produce entryLow > entryHigh — an inverted, nonsensical zone —
+  // and even when not inverted, it silently "entered" at the already-extended
+  // price instead of waiting for a pullback. This is almost certainly why ORB
+  // setups showed negative edge: the setups were chasing exhausted moves, not
+  // the ORB concept itself being unsound.
+  const triggerLevel: number | null =
+    setupType === "ORB Breakout"                 ? l.orbHigh :
+    setupType === "ORB Breakdown"                 ? l.orbLow :
+    setupType === "Previous Day High Breakout"    ? l.pdHigh :
+    setupType === "Previous Day Low Breakdown"    ? l.pdLow :
+    setupType === "Pre-Market High Breakout"      ? l.preMarketHigh :
+    setupType === "Pre-Market Low Breakdown"      ? l.preMarketLow :
+    l.vwap ?? spot; // VWAP Reclaim / Rejection / Trend
+
+  // Max distance price may have already run past the trigger before we
+  // consider the entry "still reachable." Beyond this, a real trader would
+  // wait for a retest rather than chase — so we pass instead of faking a fill.
+  const MAX_CHASE_ATR = 0.5;
+  const extension = bias === "long"
+    ? (triggerLevel != null ? (spot - triggerLevel) / atr : 0)
+    : (triggerLevel != null ? (triggerLevel - spot) / atr : 0);
+
+  if (triggerLevel != null && extension > MAX_CHASE_ATR) {
+    return {
+      bias: "no-trade", setupType: "No Setup",
+      entryLow: null, entryHigh: null,
+      stopLoss: null, target1: null, target2: null,
+      rrRatio1: null, rrRatio2: null, riskPerShare: null,
+      bestWindow,
+      noTradeReason: `${setupType} trigger already ${extension.toFixed(1)}x ATR behind price — too extended to chase, wait for a pullback/retest`,
+      confidence: signalScore.conviction,
+    };
+  }
 
   // ── Empirical setup-type quality gate ────────────────────────────────────────
   // Derived from a walk-forward backtest (18 symbols, ~58 trading days, train/test
@@ -411,12 +498,11 @@ export function generateTradeSetup(params: {
   // re-run `pnpm --filter @workspace/api-server run backtest` periodically as
   // more history accrues and widen this list only when a setup type clears
   // the bar (N >= 12 trades in TRAIN, positive avg R) AND holds up on TEST.
-  const EMPIRICAL_SETUP_ALLOWLIST = new Set<string>([
-    "Previous Day Low Breakdown",
-    "VWAP Rejection",
-  ]);
+  // NOTE: this list was re-derived AFTER the trigger/chase-guard fix above —
+  // see BACKTEST_REPORT.md for the corrected numbers.
+  const EMPIRICAL_SETUP_ALLOWLIST = new Set<string>(EMPIRICAL_ALLOWED_SETUP_TYPES);
 
-  if (!EMPIRICAL_SETUP_ALLOWLIST.has(setupType)) {
+  if (!bypassEmpiricalGate && !EMPIRICAL_SETUP_ALLOWLIST.has(setupType)) {
     return {
       bias: "no-trade", setupType: "No Setup",
       entryLow: null, entryHigh: null,
@@ -429,16 +515,20 @@ export function generateTradeSetup(params: {
   }
 
   // ── Entry zone, stop, targets ────────────────────────────────────────────────
+  // Entry zone is now anchored to the correct trigger level (retest zone),
+  // not a mix of "trigger" and possibly-extended "spot". Ordering is enforced
+  // with min/max so the zone can never invert.
   let entryLow: number | null  = null;
   let entryHigh: number | null = null;
   let stopLoss: number | null  = null;
   let target1: number | null   = null;
   let target2: number | null   = null;
 
+  const trig = triggerLevel ?? spot;
+
   if (bias === "long") {
-    const trigger = l.orbBroken === "up" ? l.orbHigh : l.vwap ?? spot;
-    entryLow  = +(Math.max(trigger ?? spot, spot - atr * 0.15)).toFixed(2);
-    entryHigh = +((trigger ?? spot) + atr * 0.15).toFixed(2);
+    entryLow  = +(Math.min(trig - atr * 0.10, trig) ).toFixed(2);
+    entryHigh = +(Math.max(trig + atr * 0.15, trig) ).toFixed(2);
 
     // Stop: tightest valid level below entry, but never so tight that normal
     // intraday noise would stop it out before the thesis has a chance to play
@@ -450,11 +540,11 @@ export function generateTradeSetup(params: {
       l.vwap ? l.vwap - halfAtr : null,
       l.orbLow   ? l.orbLow   - atr * 0.10 : null,
       l.pdLow    ? l.pdLow    - atr * 0.05 : null,
-    ].filter((v): v is number => v != null && v <= spot - atr * MIN_STOP_ATR);
+    ].filter((v): v is number => v != null && v <= entryLow! - atr * MIN_STOP_ATR);
 
     stopLoss = stopCandidates.length
       ? +(Math.max(...stopCandidates)).toFixed(2) // tightest valid stop
-      : +(spot - atr * 0.75).toFixed(2);
+      : +(entryLow - atr * 0.75).toFixed(2);
 
     // Targets: nearest meaningful resistance above entry
     const t1Candidates = [
@@ -462,10 +552,10 @@ export function generateTradeSetup(params: {
       l.pdHigh   && spot < l.pdHigh ? l.pdHigh               : null,
       l.preMarketHigh && spot < l.preMarketHigh ? l.preMarketHigh : null,
       l.vwapUpper1,
-    ].filter((v): v is number => v != null && v > (entryHigh ?? spot) + halfAtr * 0.5);
+    ].filter((v): v is number => v != null && v > entryHigh! + halfAtr * 0.5);
     target1 = t1Candidates.length
       ? +(Math.min(...t1Candidates)).toFixed(2)
-      : +(spot + atr * 1.5).toFixed(2);
+      : +(entryHigh + atr * 1.5).toFixed(2);
 
     const t2Candidates = [
       l.orbHigh && l.orbRange ? l.orbHigh + l.orbRange * 2 : null,
@@ -473,13 +563,12 @@ export function generateTradeSetup(params: {
     ].filter((v): v is number => v != null && v > (target1 ?? spot) + halfAtr * 0.5);
     target2 = t2Candidates.length
       ? +(Math.min(...t2Candidates)).toFixed(2)
-      : +(spot + atr * 2.5).toFixed(2);
+      : +(entryHigh + atr * 2.5).toFixed(2);
 
   } else {
     // SHORT
-    const trigger = l.orbBroken === "down" ? l.orbLow : l.vwap ?? spot;
-    entryHigh = +(Math.min(trigger ?? spot, spot + atr * 0.15)).toFixed(2);
-    entryLow  = +((trigger ?? spot) - atr * 0.15).toFixed(2);
+    entryHigh = +(Math.max(trig + atr * 0.10, trig)).toFixed(2);
+    entryLow  = +(Math.min(trig - atr * 0.15, trig)).toFixed(2);
 
     const MIN_STOP_ATR = 0.4;
     const stopCandidates = [
@@ -487,21 +576,21 @@ export function generateTradeSetup(params: {
       l.vwap ? l.vwap + halfAtr : null,
       l.orbHigh  ? l.orbHigh  + atr * 0.10 : null,
       l.pdHigh   ? l.pdHigh   + atr * 0.05 : null,
-    ].filter((v): v is number => v != null && v >= spot + atr * MIN_STOP_ATR);
+    ].filter((v): v is number => v != null && v >= entryHigh! + atr * MIN_STOP_ATR);
 
     stopLoss = stopCandidates.length
       ? +(Math.min(...stopCandidates)).toFixed(2)
-      : +(spot + atr * 0.75).toFixed(2);
+      : +(entryHigh + atr * 0.75).toFixed(2);
 
     const t1Candidates = [
       l.orbLow && l.orbRange ? l.orbLow - l.orbRange       : null,
       l.pdLow  && spot > l.pdLow  ? l.pdLow                : null,
       l.preMarketLow && spot > l.preMarketLow ? l.preMarketLow : null,
       l.vwapLower1,
-    ].filter((v): v is number => v != null && v < (entryLow ?? spot) - halfAtr * 0.5);
+    ].filter((v): v is number => v != null && v < entryLow! - halfAtr * 0.5);
     target1 = t1Candidates.length
       ? +(Math.max(...t1Candidates)).toFixed(2)
-      : +(spot - atr * 1.5).toFixed(2);
+      : +(entryLow - atr * 1.5).toFixed(2);
 
     const t2Candidates = [
       l.orbLow && l.orbRange ? l.orbLow - l.orbRange * 2 : null,
@@ -509,7 +598,7 @@ export function generateTradeSetup(params: {
     ].filter((v): v is number => v != null && v < (target1 ?? spot) - halfAtr * 0.5);
     target2 = t2Candidates.length
       ? +(Math.max(...t2Candidates)).toFixed(2)
-      : +(spot - atr * 2.5).toFixed(2);
+      : +(entryLow - atr * 2.5).toFixed(2);
   }
 
   // ── R:R ratios ───────────────────────────────────────────────────────────────

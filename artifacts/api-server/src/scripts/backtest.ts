@@ -8,9 +8,9 @@
  * `generateTradeSetup`) against real historical bars.
  *
  * DATA SOURCES (tried in priority order):
- *  1. DB cache (ohlcv_bars table) — zero network cost, populated on first run
- *  2. Stooq   — free, no sign-up, years of 5m history for US equities/ETFs
- *  3. Yahoo   — ~60-day 5m fallback; also primary for daily bars
+ *  1. DB cache      (ohlcv_bars table) — zero network cost, populated on first run
+ *  2. Alpha Vantage — ~30 days of 5m on free plan; full history on premium
+ *  3. Yahoo         — ~60-day 5m fallback; also primary for daily bars
  *
  * KNOWN LIMITATIONS (read before trusting the numbers):
  *  - No pre/post market bars in historical 5m data (pre-market signals work
@@ -150,8 +150,8 @@ async function backtestSymbol(symbol: string): Promise<{ trades: TradeResult[]; 
   let dailyBars: IntradayBar[];
   try {
     [bars5m, dailyBars] = await Promise.all([
-      fetchBars(symbol, "5m", 365),  // Stooq provides ~years; Yahoo fallback covers ~60 days
-      fetchBars(symbol, "1d", 500),  // Yahoo/Stooq daily goes back years
+      fetchBars(symbol, "5m", 365),  // Alpha Vantage (premium) or Yahoo fallback ~60 days
+      fetchBars(symbol, "1d", 500),  // Yahoo/Alpha Vantage daily goes back years
     ]);
   } catch (err) {
     console.error(`  [${symbol}] fetch failed:`, (err as Error).message);
@@ -401,7 +401,7 @@ Generated: ${new Date().toISOString()}
 
 ## Methodology
 - Symbols (${SYMBOLS.length}): ${SYMBOLS.join(", ")}
-- Data: Stooq 5m bars (years of history, no pre/post market; Yahoo as fallback ~60 days) + daily bars (~500 days) for PDH/PDL/ATR/avg-volume. Results cached in ohlcv_bars DB table.
+- Data: Alpha Vantage 5m bars (premium: years of history; free: ~30 days; Yahoo fallback ~60 days) + daily bars (~500 days) for PDH/PDL/ATR/avg-volume. Results cached in ohlcv_bars DB table.
 - Decision windows tested per trading day (ET): ${DECISION_TIMES_ET.map((t) => `${Math.floor(t)}:${String(Math.round((t % 1) * 60)).padStart(2, "0")}`).join(", ")}
 - Uses the exact production code path: \`computeIntradayLevels\` → \`computeIntradaySignals\` → \`generateTradeSetup\`
 - **Walk-forward split**: first ${Math.round(TRAIN_FRACTION * 100)}% of each symbol's trading days = TRAIN (used only to derive the setup-type quality gate below), last ${Math.round((1 - TRAIN_FRACTION) * 100)}% = TEST (held out, scored with the gate frozen from TRAIN — this is genuine out-of-sample evidence, not a re-fit)

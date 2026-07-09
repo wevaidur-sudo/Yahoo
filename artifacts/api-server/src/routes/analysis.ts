@@ -394,7 +394,7 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
 
     const genAI = getGemini();
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.1-flash-lite",
       generationConfig: {
         responseMimeType: "application/json",
         maxOutputTokens: 4096,
@@ -589,7 +589,7 @@ Return ONLY valid JSON (no markdown):
 
     const genAI = getGemini();
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.1-flash-lite",
       generationConfig: {
         responseMimeType: "application/json",
         maxOutputTokens: 4096,

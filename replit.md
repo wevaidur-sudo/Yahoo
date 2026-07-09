@@ -53,9 +53,10 @@ pnpm --filter @workspace/api-server run backtest
 
 Data sources tried in order for intraday (5m) bars:
 1. **DB cache** (`ohlcv_bars`) — zero network cost, populated on first run
-2. **Yahoo Finance** — ~60 days of 5m history
+2. **EODHD** — ~1 year of 5m history (`EODHD_API_KEY`, defaults to `"demo"`)
+3. **Yahoo Finance** — ~60 days of 5m, fallback
 
-For daily (1d) bars: DB cache → Yahoo Finance (decades of history).
+For daily (1d) bars: DB cache → EODHD → Yahoo Finance.
 
 ## Required Secrets
 

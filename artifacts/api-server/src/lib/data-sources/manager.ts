@@ -3,11 +3,13 @@
  *
  * Priority order for intraday (5m) data:
  *   1. DB cache — fastest, zero network cost
- *   2. Yahoo   — ~60 days of 5m history
+ *   2. EODHD   — ~1 year of 5m history (demo key works)
+ *   3. Yahoo   — ~60 days of 5m, fallback
  *
  * For daily (1d) data:
  *   1. DB cache
- *   2. Yahoo (decades of daily data)
+ *   2. EODHD (decades of daily data)
+ *   3. Yahoo  (fallback)
  *
  * Coverage validation: a source result is accepted only when its bar density
  * is plausible for the interval (no large internal holes). Otherwise the
@@ -16,13 +18,15 @@
 
 import type { IntradayBar } from "../intraday";
 import type { BarInterval, DataSource } from "./types";
+import { EodhdSource } from "./eodhd";
 import { YahooSource } from "./yahoo";
 
+const eodhd = new EodhdSource();
 const yahoo = new YahooSource();
 
 /** Ordered source lists for each interval. */
-const INTRADAY_SOURCES: DataSource[] = [yahoo];
-const DAILY_SOURCES:    DataSource[] = [yahoo];
+const INTRADAY_SOURCES: DataSource[] = [eodhd, yahoo];
+const DAILY_SOURCES:    DataSource[] = [eodhd, yahoo];
 
 const DAY_MS = 86_400_000;
 

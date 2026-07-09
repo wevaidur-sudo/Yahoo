@@ -1,47 +1,70 @@
 # FinanceScope
 
-A market intelligence app that lets users search and browse real-time stock, crypto, ETF, and futures data from Yahoo Finance.
-
-## Run & Operate
-
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 8080)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
-- Required secret: `GEMINI_API_KEY` — used by the AI analysis route
-- Optional secret: `TIINGO_API_KEY` — enables the delisted-stock fallback (search/quote/history) when Yahoo Finance no longer serves a symbol; app works without it, just without delisted-ticker coverage
+A market intelligence platform for real-time stock, crypto, ETF, and futures data. Features a machine-learning pipeline for market analysis and AI-driven stock analysis via Google Gemini.
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- **Frontend:** React 19, Vite, Tailwind CSS 4, Radix UI, Wouter (routing), React Query
+- **Backend:** Node.js 24, Express 5, Drizzle ORM, PostgreSQL
+- **Data:** yahoo-finance2 (primary), Tiingo API (fallback for delisted tickers)
+- **AI:** Google Gemini SDK for qualitative analysis overlay
+- **ML:** Custom GBM pipeline for signal scoring
+- **Monorepo:** pnpm workspaces
 
-## Where things live
+## Project Structure
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+```
+artifacts/
+  api-server/          # Express backend + ML training scripts
+  yahoo-finance-scraper/ # React frontend
+  mockup-sandbox/      # UI component dev environment
+lib/
+  db/                  # Drizzle ORM schema + config
+  api-spec/            # OpenAPI spec (source of truth for codegen)
+  api-zod/             # Generated Zod schemas + React Query hooks
+  ml/                  # ML feature generation and scoring
+```
 
-## Architecture decisions
+## Running the App
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+Three workflows are configured and start automatically:
 
-## Product
+| Workflow | Command |
+|----------|---------|
+| API Server | `pnpm --filter @workspace/api-server run dev` |
+| Frontend | `pnpm --filter @workspace/yahoo-finance-scraper run dev` |
+| Mockup Sandbox | `pnpm --filter @workspace/mockup-sandbox run dev` |
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+## Database
 
-## User preferences
+Uses Replit's built-in PostgreSQL (`DATABASE_URL` is auto-injected). To push schema changes:
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+```bash
+pnpm --filter @workspace/db push
+```
 
-## Gotchas
+## Required Secrets
 
-- Yahoo Finance drops delisted tickers entirely. `finance.ts` falls back to Tiingo (`lib/tiingo.ts`) for search, quote, and history when Yahoo returns "no data"/"may be delisted" — results carry `source: "tiingo"` and `delisted: true`. The `/finance/delisted/:symbol` endpoint exposes raw Tiingo metadata (listing dates).
+| Secret | Purpose |
+|--------|---------|
+| `GEMINI_API_KEY` | AI-powered qualitative analysis |
+| `TIINGO_API_KEY` | Fallback data for delisted tickers |
+| `SESSION_SECRET` | Express session signing |
 
-## Pointers
+## Type Codegen
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+After changing the OpenAPI spec (`lib/api-spec`), regenerate types:
+
+```bash
+pnpm --filter @workspace/api-spec run codegen
+```
+
+## ML Training
+
+```bash
+pnpm --filter @workspace/api-server run train-ml
+```
+
+## User Preferences
+
+- Keep existing project structure and stack — do not restructure or migrate.

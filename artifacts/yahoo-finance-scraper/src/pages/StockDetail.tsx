@@ -72,7 +72,14 @@ export default function StockDetail() {
     if (!quote) return null;
     const { marketState, preMarketPrice, preMarketChange, preMarketChangePercent, postMarketPrice, postMarketChange, postMarketChangePercent } = quote;
     if (marketState === "PRE" || marketState === "PREPRE") {
-      return { price: preMarketPrice, change: preMarketChange, pct: preMarketChangePercent, label: "Pre-Market" };
+      // preMarketPrice only populates once pre-market trading begins (4 AM ET).
+      // Before that, show last night's after-hours price as the best available reference.
+      if (preMarketPrice != null) {
+        return { price: preMarketPrice, change: preMarketChange, pct: preMarketChangePercent, label: "Pre-Market" };
+      }
+      if (postMarketPrice != null) {
+        return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours" };
+      }
     }
     if (marketState === "POST" || marketState === "POSTPOST") {
       return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours" };

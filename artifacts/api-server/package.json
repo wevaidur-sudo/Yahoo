@@ -20,6 +20,8 @@
     "express": "^5.2.1",
     "pino": "^9.14.0",
     "pino-http": "^10.5.0",
+    "playwright-core": "^1.61.1",
+    "tls-client": "^0.0.5",
     "yahoo-finance2": "^3.15.4"
   },
   "devDependencies": {

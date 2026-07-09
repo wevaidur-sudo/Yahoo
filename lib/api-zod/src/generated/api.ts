@@ -183,6 +183,19 @@ export const GetStockAnalysisResponse = zod.object({
   "note": zod.string()
 }))
 }).describe('Rules-based signal confluence score computed deterministically from standard financial formulas (Wilder RSI, SMA-seeded EMA, MACD, Bollinger Bands, moving average alignment, volume). Not an AI estimate.\n'),
+  "quantScore": zod.object({
+  "available": zod.boolean(),
+  "overall": zod.number().nullish().describe('1 (bearish) to 10 (bullish) combined score'),
+  "momentum": zod.number().nullish(),
+  "value": zod.number().nullish().describe('Value\/fundamental sub-score. Trained using current fundamentals joined across historical price rows (point-in-time historical fundamentals aren\'t available from this data source) — a known, disclosed limitation vs the fully point-in-time Momentum\/Low-Risk scores.\n'),
+  "lowRisk": zod.number().nullish(),
+  "horizonDays": zod.number().nullish().describe('Prediction horizon in trading days used to label training outcomes'),
+  "backtestAccuracy": zod.number().nullish().describe('Holdout classification accuracy (%) on chronologically split test data'),
+  "backtestWinRate": zod.number().nullish().describe('Precision (%) of positive predictions on holdout data'),
+  "backtestBaseRate": zod.number().nullish().describe('Share (%) of positive labels in the holdout set, for context vs accuracy'),
+  "modelTrainedAt": zod.string().nullish(),
+  "trainSampleSize": zod.number().nullish()
+}).optional().describe('Danelfin-style 1-10 factor scores from a real trained gradient-boosted tree model (not a hand-weighted formula). `available` is false until the model has been trained at least once via the retraining job — in that case all numeric fields are null. Backtested via a chronological (not random) train\/test split for an honest accuracy estimate. This is a statistical estimate based on historical patterns, NOT financial advice, and past performance does not guarantee future results.\n'),
   "trend": zod.object({
   "direction": zod.enum(['bullish', 'bearish', 'neutral']),
   "confidence": zod.number(),

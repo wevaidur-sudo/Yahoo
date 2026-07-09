@@ -24,6 +24,7 @@ export * from './optionsStrategyRiskLevel';
 export * from './optionsStrategyStrategyType';
 export * from './pricePoint';
 export * from './priceTargets';
+export * from './quantScore';
 export * from './searchResult';
 export * from './searchSymbolsParams';
 export * from './signalScore';

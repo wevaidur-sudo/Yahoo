@@ -672,6 +672,52 @@ components:
         - neutralCount
         - signals
 
+    QuantScore:
+      type: object
+      description: >
+        Danelfin-style 1-10 factor scores from a real trained gradient-boosted
+        tree model (not a hand-weighted formula). `available` is false until
+        the model has been trained at least once via the retraining job — in
+        that case all numeric fields are null. Backtested via a chronological
+        (not random) train/test split for an honest accuracy estimate. This
+        is a statistical estimate based on historical patterns, NOT financial
+        advice, and past performance does not guarantee future results.
+      properties:
+        available:
+          type: boolean
+        overall:
+          type: ["number", "null"]
+          description: 1 (bearish) to 10 (bullish) combined score
+        momentum:
+          type: ["number", "null"]
+        value:
+          type: ["number", "null"]
+          description: >
+            Value/fundamental sub-score. Trained using current fundamentals
+            joined across historical price rows (point-in-time historical
+            fundamentals aren't available from this data source) — a known,
+            disclosed limitation vs the fully point-in-time Momentum/Low-Risk scores.
+        lowRisk:
+          type: ["number", "null"]
+        horizonDays:
+          type: ["number", "null"]
+          description: Prediction horizon in trading days used to label training outcomes
+        backtestAccuracy:
+          type: ["number", "null"]
+          description: Holdout classification accuracy (%) on chronologically split test data
+        backtestWinRate:
+          type: ["number", "null"]
+          description: Precision (%) of positive predictions on holdout data
+        backtestBaseRate:
+          type: ["number", "null"]
+          description: Share (%) of positive labels in the holdout set, for context vs accuracy
+        modelTrainedAt:
+          type: ["string", "null"]
+        trainSampleSize:
+          type: ["number", "null"]
+      required:
+        - available
+
     StockAnalysis:
       type: object
       properties:
@@ -681,6 +727,8 @@ components:
           type: string
         signalScore:
           $ref: "#/components/schemas/SignalScore"
+        quantScore:
+          $ref: "#/components/schemas/QuantScore"
         trend:
           $ref: "#/components/schemas/TrendPrediction"
         intraday:

@@ -19,6 +19,7 @@ import {
   Loader2,
   ShieldAlert,
   Calculator,
+  Cpu,
 } from "lucide-react";
 
 interface Props {
@@ -168,6 +169,83 @@ function ProminentDisclaimer() {
           Past indicator readings do not guarantee future price movements. Options trading involves substantial
           risk of loss and is not suitable for all investors. Consult a licensed financial advisor before
           making any investment decision.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function FactorGauge({ label, value }: { label: string; value: number | null | undefined }) {
+  const v = value ?? null;
+  const color = v === null ? "text-muted-foreground" : v >= 7 ? "text-[#00C853]" : v <= 4 ? "text-[#FF333A]" : "text-amber-400";
+  const bg = v === null ? "bg-muted/40 border-border" : v >= 7 ? "bg-[#00C853]/10 border-[#00C853]/30" : v <= 4 ? "bg-[#FF333A]/10 border-[#FF333A]/30" : "bg-amber-500/10 border-amber-500/30";
+  return (
+    <div className={cn("flex flex-col items-center justify-center rounded-xl border p-4 flex-1 min-w-[90px]", bg)}>
+      <span className={cn("text-2xl font-display font-bold", color)}>{v ?? "–"}</span>
+      <span className="text-[10px] text-muted-foreground uppercase tracking-wider mt-1">{label}</span>
+    </div>
+  );
+}
+
+function QuantScorePanel({ quantScore }: { quantScore: any }) {
+  if (!quantScore.available) {
+    return (
+      <div className="bg-card border border-card-border rounded-2xl p-6 md:p-8 shadow-sm">
+        <div className="flex items-center gap-2 mb-2">
+          <Cpu className="w-5 h-5 text-primary" />
+          <h2 className="text-xl font-display font-semibold">Quant ML Score</h2>
+          <span className="ml-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted border border-border px-2 py-0.5 rounded-full">
+            Machine Learning
+          </span>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          The trained model has not run yet — scores will appear here once the retraining job completes.
+        </p>
+      </div>
+    );
+  }
+
+  const acc = quantScore.backtestAccuracy;
+  const base = quantScore.backtestBaseRate;
+
+  return (
+    <div className="bg-card border border-card-border rounded-2xl p-6 md:p-8 shadow-sm">
+      <div className="flex items-center gap-2 mb-1">
+        <Cpu className="w-5 h-5 text-primary" />
+        <h2 className="text-xl font-display font-semibold">Quant ML Score</h2>
+        <span className="ml-1 text-[10px] font-bold uppercase tracking-wider text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-full">
+          Trained Model
+        </span>
+      </div>
+      <p className="text-xs text-muted-foreground mb-6">
+        1–10 scores from a gradient-boosted tree model trained on {quantScore.trainSampleSize?.toLocaleString()} historical
+        price observations, predicting {quantScore.horizonDays}-day forward direction. Danelfin-style factor breakdown.
+      </p>
+
+      <div className="flex flex-wrap gap-3 mb-6">
+        <FactorGauge label="Overall" value={quantScore.overall} />
+        <FactorGauge label="Momentum" value={quantScore.momentum} />
+        <FactorGauge label="Value" value={quantScore.value} />
+        <FactorGauge label="Low-Risk" value={quantScore.lowRisk} />
+      </div>
+
+      <div className="rounded-xl border border-border/60 bg-background px-4 py-3 space-y-2">
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-semibold uppercase tracking-wider text-muted-foreground">Backtested Accuracy</span>
+          <span className="font-mono font-bold text-foreground">
+            {acc?.toFixed(1)}%{" "}
+            <span className="font-normal text-muted-foreground">
+              (vs {base?.toFixed(1)}% base rate)
+            </span>
+          </span>
+        </div>
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          Measured on a chronological holdout set (the model never saw these dates during training) — this is an
+          honest out-of-sample estimate, not a curve-fit backtest. Model last trained{" "}
+          {quantScore.modelTrainedAt ? new Date(quantScore.modelTrainedAt).toLocaleDateString() : "recently"}.
+          Value score uses current (not historical point-in-time) fundamentals — a known limitation.{" "}
+          <strong className="text-foreground">Statistical estimate only, not financial advice.</strong> Past
+          accuracy does not guarantee future performance.
         </p>
       </div>
     </div>
@@ -477,6 +555,9 @@ export default function AIAnalysisTab({ symbol }: Props) {
           </div>
         </div>
       </div>
+
+      {/* ── Quant ML Score (real trained model, backtested) ──── */}
+      {analysis.quantScore && <QuantScorePanel quantScore={analysis.quantScore} />}
 
       {/* ── AI Qualitative Commentary (LLM) ──────────────────── */}
       <div className="bg-card border border-card-border rounded-2xl p-6 md:p-8 shadow-sm">

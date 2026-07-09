@@ -1,1 +1,3 @@
 - [AI Analysis Architecture](ai-analysis-architecture.md) — signal score is formula-based (deterministic), Gemini provides qualitative overlay only; score normalization uses fixed category weights in denominator even for neutral signals.
+- [Long-running jobs in this sandbox](long-jobs-in-sandbox.md) — background/detached processes get killed when a bash tool call returns; checkpoint long jobs (training, bulk fetch) into DB-persisted chunks instead.
+- [TS project references stale dist](ts-project-refs-stale-dist.md) — adding exports to a composite lib package can fail typecheck with a false "no exported member" until dependents are rebuilt via `tsc -b --force`.

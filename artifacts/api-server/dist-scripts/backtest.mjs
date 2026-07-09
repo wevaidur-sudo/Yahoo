@@ -29153,23 +29153,21 @@ function computeIntradaySignals(params) {
   return { direction, conviction, bullishCount, bearishCount, neutralCount, noTradeReason, signals };
 }
 var EMPIRICAL_ALLOWED_SETUP_TYPES = [
-  // ✅ Cleared TRAIN gate AND positive combined: strongest evidence.
-  // Combined: 55.3% WR, +0.20R (94 trades). TRAIN: 68.9% WR, +0.43R (61 trades).
+  // ✅ Strongest evidence. Combined: 65.2% WR, +0.23R (161 trades).
+  // Consistently the highest win-rate setup across all runs. Short bias,
+  // PDL is a well-respected institutional support/resistance flip level.
   "Previous Day Low Breakdown",
-  // ⚠️  Provisional — positive COMBINED but TRAIN avg R is -0.00R (borderline).
-  // Combined: 50.0% WR, +0.19R (32 trades). Thesis: pre-market low is a well-
-  // respected institutional level; breakdown has same mechanics as PDL breakdown.
-  // Remove from this list if next backtest run shows combined avg R turns negative.
-  "Pre-Market Low Breakdown",
-  // ⚠️  Provisional — positive prior run (56.3% WR) but 0 trades in latest run
-  // (setup requires spot within 0.3% of VWAP at a fixed decision time — rare).
-  // Sound thesis: spot retesting VWAP from below with bearish bias = clean rejection.
-  // Keep until two consecutive runs produce 0 trades (then reassess definition).
-  "VWAP Rejection"
-  // ✗  Long-side setups ALL blocked: PDH Breakout (-0.26R), ORB Breakout (-0.27R),
-  //    Pre-Market High Breakout (+0.01R near-zero) showed no reliable edge in the
-  //    current data window. Long setups are further guarded by the ≥50 conviction
-  //    floor in generateTradeSetup. Revisit after next backtest run.
+  // ✅ Cleared TRAIN gate. Combined: 47.2% WR, +0.13R (36 trades).
+  // Modest sample — treat as provisional. Remove if next run avg R turns negative.
+  // Pre-market high acts as an intraday resistance ceiling; breakout with momentum.
+  "Pre-Market High Breakout"
+  // ✗  Removed: Pre-Market Low Breakdown — insufficient TRAIN trades (N < 12 threshold).
+  //    +0.45R is promising but the sample is too thin to trust (17 combined trades).
+  //    Revisit when N grows beyond 12 in TRAIN.
+  // ✗  Removed: VWAP Rejection — 1 trade in latest run (-1.00R). Definition too
+  //    restrictive (spot within 0.3% of VWAP at fixed decision times). Reassess definition.
+  // ✗  Long setups blocked: PDH Breakout (-0.08R), ORB Breakout (+0.03R weak),
+  //    ORB Breakdown (-0.10R). Long bias overall: 50.3% WR, -0.02R.
 ];
 function generateTradeSetup(params) {
   const { spot, levels: l, signalScore, now, bypassEmpiricalGate } = params;

@@ -1,6 +1,6 @@
 # Intraday Signal Engine — Backtest Report
 
-Generated: 2026-07-09T20:45:50.941Z
+Generated: 2026-07-09T20:56:29.724Z
 
 ## Methodology
 - Symbols (18): AAPL, MSFT, NVDA, AMZN, TSLA, META, GOOGL, SPY, QQQ, AMD, NFLX, JPM, XOM, UNH, COST, AVGO, CRM, ORCL

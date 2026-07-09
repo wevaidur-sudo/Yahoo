@@ -166,6 +166,29 @@ export const GetDelistedLookupResponse = zod.object({
 
 
 /**
+ * @summary Live progress of the background ML retraining job (for UI polling)
+ */
+export const GetTrainingStatusResponse = zod.object({
+  "phase": zod.enum(['idle', 'fetching-history', 'fetching-fundamentals', 'building-training-set', 'training-model', 'done', 'error']),
+  "currentSymbol": zod.string().nullable(),
+  "symbolsDone": zod.number(),
+  "symbolsTotal": zod.number(),
+  "currentModelKind": zod.string().nullable(),
+  "currentFold": zod.number().nullable(),
+  "totalFolds": zod.number().nullable(),
+  "message": zod.string(),
+  "startedAt": zod.string().nullable(),
+  "updatedAt": zod.string(),
+  "scheduler": zod.object({
+  "isRunning": zod.boolean(),
+  "lastRunAt": zod.string().nullable(),
+  "nextRunAt": zod.string().nullable(),
+  "lastError": zod.string().nullable()
+})
+}).describe('Live progress snapshot of the background ML retraining pipeline, for UI polling. Process-local — resets to \"idle\" on server restart.\n')
+
+
+/**
  * @summary Get trending tickers
  */
 export const GetTrendingResponseItem = zod.object({

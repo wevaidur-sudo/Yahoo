@@ -27,6 +27,7 @@ import {
   PREDICTION_HORIZON_DAYS,
   OUTPERFORM_THRESHOLD,
 } from "./universe";
+import { setFetchProgress, setBuildingTrainingSet } from "./progress";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const yahooFinance = new (YahooFinance as any)({ suppressNotices: ["yahooSurvey"] });
@@ -52,7 +53,9 @@ export async function fetchAndStoreHistory(
     ? symbols
     : [SPY_BENCHMARK, ...symbols];
 
-  for (const symbol of allSymbols) {
+  for (let i = 0; i < allSymbols.length; i++) {
+    const symbol = allSymbols[i];
+    setFetchProgress("fetching-history", symbol, i + 1, allSymbols.length);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const chart = (await (yahooFinance as any).chart(symbol, {
@@ -96,7 +99,9 @@ export async function fetchAndCacheFundamentals(
   symbols: string[] = TRAINING_UNIVERSE,
   log: (msg: string) => void = console.log,
 ): Promise<void> {
-  for (const symbol of symbols) {
+  for (let i = 0; i < symbols.length; i++) {
+    const symbol = symbols[i];
+    setFetchProgress("fetching-fundamentals", symbol, i + 1, symbols.length);
     const snap = await fetchFundamentalsLive(symbol);
     await db
       .insert(fundamentalsCacheTable)
@@ -155,6 +160,7 @@ export async function buildTrainingSet(
   symbols: string[] = TRAINING_UNIVERSE,
   log: (msg: string) => void = console.log,
 ): Promise<TrainingRow[]> {
+  setBuildingTrainingSet();
   // ── Load SPY benchmark history into a date→close map ─────────────────────
   const spyBars = (
     await db

@@ -21,8 +21,11 @@ import {
   GetTrendingResponse,
   GetDelistedLookupParams,
   GetDelistedLookupResponse,
+  GetTrainingStatusResponse,
 } from "@workspace/api-zod";
 import { tiingo } from "../lib/tiingo";
+import { getTrainingProgress } from "../lib/ml/progress";
+import { getSchedulerStatus } from "../lib/ml/scheduler";
 
 const router: IRouter = Router();
 
@@ -567,6 +570,18 @@ router.get("/finance/summary/:symbol", async (req, res): Promise<void> => {
       res.status(500).json({ error: "Failed to fetch company summary" });
     }
   }
+});
+
+// GET /finance/training-status
+router.get("/finance/training-status", (_req, res): void => {
+  const progress = getTrainingProgress();
+  const scheduler = getSchedulerStatus();
+  res.json(
+    GetTrainingStatusResponse.parse({
+      ...progress,
+      scheduler,
+    }),
+  );
 });
 
 // GET /finance/trending

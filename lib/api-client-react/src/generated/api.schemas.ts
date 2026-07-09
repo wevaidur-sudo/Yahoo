@@ -442,6 +442,51 @@ export interface QuantScore {
   trainSampleSize?: number | null;
 }
 
+export type TrainingStatusPhase = typeof TrainingStatusPhase[keyof typeof TrainingStatusPhase];
+
+
+export const TrainingStatusPhase = {
+  idle: 'idle',
+  'fetching-history': 'fetching-history',
+  'fetching-fundamentals': 'fetching-fundamentals',
+  'building-training-set': 'building-training-set',
+  'training-model': 'training-model',
+  done: 'done',
+  error: 'error',
+} as const;
+
+export type TrainingStatusScheduler = {
+  isRunning: boolean;
+  /** @nullable */
+  lastRunAt: string | null;
+  /** @nullable */
+  nextRunAt: string | null;
+  /** @nullable */
+  lastError: string | null;
+};
+
+/**
+ * Live progress snapshot of the background ML retraining pipeline, for UI polling. Process-local — resets to "idle" on server restart.
+ */
+export interface TrainingStatus {
+  phase: TrainingStatusPhase;
+  /** @nullable */
+  currentSymbol: string | null;
+  symbolsDone: number;
+  symbolsTotal: number;
+  /** @nullable */
+  currentModelKind: string | null;
+  /** @nullable */
+  currentFold: number | null;
+  /** @nullable */
+  totalFolds: number | null;
+  message: string;
+  /** @nullable */
+  startedAt: string | null;
+  updatedAt: string;
+  scheduler: TrainingStatusScheduler;
+}
+
 export interface StockAnalysis {
   symbol: string;
   generatedAt: string;

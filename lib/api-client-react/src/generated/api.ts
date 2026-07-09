@@ -33,6 +33,7 @@ import type {
   SearchSymbolsParams,
   StockAnalysis,
   StockQuote,
+  TrainingStatus,
   TrendingTicker
 } from './api.schemas';
 
@@ -603,6 +604,83 @@ export function useGetDelistedLookup<TData = Awaited<ReturnType<typeof getDelist
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetDelistedLookupQueryOptions(symbol,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetTrainingStatusUrl = () => {
+
+
+
+
+  return `/api/finance/training-status`
+}
+
+/**
+ * @summary Live progress of the background ML retraining job (for UI polling)
+ */
+export const getTrainingStatus = async ( options?: RequestInit): Promise<TrainingStatus> => {
+
+  return customFetch<TrainingStatus>(getGetTrainingStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTrainingStatusQueryKey = () => {
+    return [
+    `/api/finance/training-status`
+    ] as const;
+    }
+
+
+export const getGetTrainingStatusQueryOptions = <TData = Awaited<ReturnType<typeof getTrainingStatus>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrainingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTrainingStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTrainingStatus>>> = ({ signal }) => getTrainingStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTrainingStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTrainingStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getTrainingStatus>>>
+export type GetTrainingStatusQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Live progress of the background ML retraining job (for UI polling)
+ */
+
+export function useGetTrainingStatus<TData = Awaited<ReturnType<typeof getTrainingStatus>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTrainingStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTrainingStatusQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

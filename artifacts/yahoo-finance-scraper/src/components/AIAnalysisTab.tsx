@@ -2,6 +2,8 @@ import { useState } from "react";
 import {
   useGetStockAnalysis,
   getGetStockAnalysisQueryKey,
+  useGetTrainingStatus,
+  getGetTrainingStatusQueryKey,
 } from "@workspace/api-client-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import {
@@ -187,6 +189,91 @@ function FactorGauge({ label, value }: { label: string; value: number | null | u
   );
 }
 
+const PHASE_LABEL: Record<string, string> = {
+  idle: "Idle",
+  "fetching-history": "Fetching price history",
+  "fetching-fundamentals": "Fetching fundamentals",
+  "building-training-set": "Building training set",
+  "training-model": "Training model",
+  done: "Complete",
+  error: "Failed",
+};
+
+function TrainingProgressPanel() {
+  const { data: status } = useGetTrainingStatus({
+    query: {
+      queryKey: getGetTrainingStatusQueryKey(),
+      // Poll every 5s while a job is actually in flight; once it settles into
+      // a terminal phase (done/error) or never started (idle), stop polling —
+      // nothing further will change until a new job kicks off, so continued
+      // polling would just waste requests.
+      refetchInterval: (query) => {
+        const phase = query.state.data?.phase;
+        return phase === "done" || phase === "error" || phase === "idle" ? false : 5000;
+      },
+    },
+  });
+
+  if (!status) return null;
+
+  const phase = status.phase;
+  const isActive = phase !== "idle" && phase !== "done" && phase !== "error";
+
+  // symbolsDone/currentFold are 1-based counts of completed units, so they
+  // can reach symbolsTotal/totalFolds exactly at 100% on the last item.
+  let pct: number | null = null;
+  if (phase === "fetching-history" || phase === "fetching-fundamentals") {
+    pct = status.symbolsTotal > 0 ? (status.symbolsDone / status.symbolsTotal) * 100 : 0;
+  } else if (phase === "training-model" && status.currentFold != null && status.totalFolds) {
+    pct = (status.currentFold / status.totalFolds) * 100;
+  } else if (phase === "building-training-set") {
+    pct = null; // indeterminate — no granular counter for this step
+  }
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-background px-4 py-3 space-y-2.5 mt-4">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+          {isActive && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />}
+          Training Progress
+        </span>
+        <span className={cn(
+          "font-mono font-bold",
+          phase === "error" ? "text-[#FF333A]" : phase === "done" ? "text-[#00C853]" : "text-primary",
+        )}>
+          {PHASE_LABEL[phase] ?? phase}
+        </span>
+      </div>
+
+      {isActive && (
+        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+          {pct !== null ? (
+            <div
+              className="h-full bg-primary rounded-full transition-all duration-500"
+              style={{ width: `${Math.max(2, Math.min(100, pct))}%` }}
+            />
+          ) : (
+            <div className="h-full w-1/3 bg-primary/60 rounded-full animate-pulse" />
+          )}
+        </div>
+      )}
+
+      <p className="text-[11px] text-muted-foreground leading-relaxed">{status.message}</p>
+
+      {(phase === "fetching-history" || phase === "fetching-fundamentals") && status.symbolsTotal > 0 && (
+        <p className="text-[11px] font-mono text-muted-foreground">
+          {status.symbolsDone} / {status.symbolsTotal} symbols
+        </p>
+      )}
+      {phase === "training-model" && status.currentFold != null && status.totalFolds && (
+        <p className="text-[11px] font-mono text-muted-foreground">
+          Fold {status.currentFold} / {status.totalFolds}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function QuantScorePanel({ quantScore }: { quantScore: any }) {
   if (!quantScore.available) {
     return (
@@ -201,6 +288,7 @@ function QuantScorePanel({ quantScore }: { quantScore: any }) {
         <p className="text-sm text-muted-foreground">
           The trained model has not run yet — scores will appear here once the retraining job completes.
         </p>
+        <TrainingProgressPanel />
       </div>
     );
   }

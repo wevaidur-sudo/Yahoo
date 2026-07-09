@@ -190,6 +190,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /finance/training-status:
+    get:
+      operationId: getTrainingStatus
+      tags: [finance]
+      summary: Live progress of the background ML retraining job (for UI polling)
+      responses:
+        "200":
+          description: Current phase, progress counters, and scheduler status of the ML training pipeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingStatus"
+
   /finance/trending:
     get:
       operationId: getTrending
@@ -777,6 +790,58 @@ components:
           type: ["number", "null"]
       required:
         - available
+
+    TrainingStatus:
+      type: object
+      description: >
+        Live progress snapshot of the background ML retraining pipeline, for
+        UI polling. Process-local — resets to "idle" on server restart.
+      properties:
+        phase:
+          type: string
+          enum: [idle, fetching-history, fetching-fundamentals, building-training-set, training-model, done, error]
+        currentSymbol:
+          type: ["string", "null"]
+        symbolsDone:
+          type: number
+        symbolsTotal:
+          type: number
+        currentModelKind:
+          type: ["string", "null"]
+        currentFold:
+          type: ["number", "null"]
+        totalFolds:
+          type: ["number", "null"]
+        message:
+          type: string
+        startedAt:
+          type: ["string", "null"]
+        updatedAt:
+          type: string
+        scheduler:
+          type: object
+          properties:
+            isRunning:
+              type: boolean
+            lastRunAt:
+              type: ["string", "null"]
+            nextRunAt:
+              type: ["string", "null"]
+            lastError:
+              type: ["string", "null"]
+          required: [isRunning, lastRunAt, nextRunAt, lastError]
+      required:
+        - phase
+        - currentSymbol
+        - symbolsDone
+        - symbolsTotal
+        - currentModelKind
+        - currentFold
+        - totalFolds
+        - message
+        - startedAt
+        - updatedAt
+        - scheduler
 
     StockAnalysis:
       type: object

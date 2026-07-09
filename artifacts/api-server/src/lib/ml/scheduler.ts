@@ -23,6 +23,7 @@ import { logger } from "../logger";
 import { fetchAndStoreHistory, fetchAndCacheFundamentals } from "./pipeline";
 import { trainAllModels } from "./train";
 import { TRAINING_UNIVERSE } from "./universe";
+import { resetTrainingProgress, setDone, setError } from "./progress";
 
 /** One week in milliseconds. */
 const RETRAIN_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -169,6 +170,7 @@ async function runJob(): Promise<boolean> {
 
   state.isRunning = true;
   state.lastError = null;
+  resetTrainingProgress();
   logger.info(
     { symbols: TRAINING_UNIVERSE.length },
     "[ml-scheduler] Retraining job started",
@@ -181,6 +183,7 @@ async function runJob(): Promise<boolean> {
 
     state.lastRunAt = new Date();
     state.nextRunAt = new Date(Date.now() + RETRAIN_INTERVAL_MS);
+    setDone();
     logger.info(
       { nextRunAt: state.nextRunAt.toISOString() },
       "[ml-scheduler] Retraining job complete",
@@ -188,6 +191,7 @@ async function runJob(): Promise<boolean> {
     return true;
   } catch (err) {
     state.lastError = err instanceof Error ? err.message : String(err);
+    setError(state.lastError);
     logger.error({ err }, "[ml-scheduler] Retraining job failed");
     return true; // still "ran" — arm the interval so we retry next week
   } finally {

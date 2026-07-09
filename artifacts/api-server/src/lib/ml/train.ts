@@ -21,6 +21,7 @@ import { GradientBoostedTrees } from "./gbm";
 import { FEATURE_GROUPS, vectorFor, type FeatureName } from "./features";
 import { buildTrainingSet, type TrainingRow } from "./pipeline";
 import { PREDICTION_HORIZON_DAYS, TRAINING_UNIVERSE, WALK_FORWARD_FOLDS } from "./universe";
+import { setTrainingFold, setTrainingFinalFit } from "./progress";
 
 // Number of calendar-days buffer to subtract from the fold cutoff so that
 // no training label's horizon date falls inside the test window.
@@ -131,6 +132,7 @@ async function walkForwardValidation(
   const foldResults: FoldResult[] = [];
 
   for (let fold = 0; fold < nFolds; fold++) {
+    setTrainingFold(kind, fold + 1, nFolds);
     // Training window: everything before this fold's cutoff
     const trainEndIdx = minTrainDates + fold * foldSize;
     // Test window: [trainEnd, trainEnd + foldSize) or end of date list
@@ -243,6 +245,7 @@ export async function trainAllModels(
     // maximum signal from recent data. The honest accuracy number comes from
     // walk-forward above, not from this final fit.
     log(`[train] "${kind}" — training final model on all ${rows.length} rows…`);
+    setTrainingFinalFit(kind);
     const productionModel = new GradientBoostedTrees();
     await productionModel.fit(
       rows.map((r) => vectorFor(r.features, group)),

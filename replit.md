@@ -48,7 +48,6 @@ pnpm --filter @workspace/db push
 | Secret | Purpose |
 |--------|---------|
 | `GEMINI_API_KEY` | AI-powered qualitative analysis |
-| `TIINGO_API_KEY` | Fallback data for delisted tickers |
 | `SESSION_SECRET` | Express session signing |
 
 ## Type Codegen

@@ -62,8 +62,11 @@ export const mlModelsTable = pgTable(
 );
 
 /**
- * Cached most-recent quant scores per symbol, so repeated lookups don't need
- * to recompute features. Overwritten every time a fresh score is served.
+ * Cached most-recent quant score per symbol (one row per symbol, upserted),
+ * so repeated lookups within the freshness window don't need to recompute
+ * features/inference. Tracks the exact model version used for *each* of the
+ * 4 sub-scores independently so a partial retrain (e.g. just "lowRisk") is
+ * detected and invalidates only what's stale.
  */
 export const symbolScoresTable = pgTable(
   "ml_symbol_scores",
@@ -74,10 +77,44 @@ export const symbolScoresTable = pgTable(
     momentumScore: real("momentum_score").notNull(),
     valueScore: real("value_score").notNull(),
     lowRiskScore: real("low_risk_score").notNull(),
-    modelVersion: integer("model_version").notNull(),
+    overallModelVersion: integer("overall_model_version").notNull(),
+    momentumModelVersion: integer("momentum_model_version").notNull(),
+    valueModelVersion: integer("value_model_version").notNull(),
+    lowRiskModelVersion: integer("low_risk_model_version").notNull(),
     computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("ml_symbol_scores_symbol_idx").on(t.symbol)],
+);
+
+/**
+ * Append-only history of every quant score computed for a symbol, so past
+ * predictions can be queried/audited/displayed (e.g. "score 10 trading days
+ * ago") without recomputing anything — this is the historical record the
+ * live `symbolScoresTable` cache row does NOT preserve (it's overwritten).
+ * Also underlies future "did the prediction come true" analysis once actual
+ * forward returns are known.
+ */
+export const symbolScoreHistoryTable = pgTable(
+  "ml_symbol_score_history",
+  {
+    id: serial("id").primaryKey(),
+    symbol: text("symbol").notNull(),
+    asOfDate: text("as_of_date").notNull(), // ISO date (YYYY-MM-DD) the score was computed for
+    overallScore: real("overall_score").notNull(),
+    momentumScore: real("momentum_score").notNull(),
+    valueScore: real("value_score").notNull(),
+    lowRiskScore: real("low_risk_score").notNull(),
+    overallModelVersion: integer("overall_model_version").notNull(),
+    momentumModelVersion: integer("momentum_model_version").notNull(),
+    valueModelVersion: integer("value_model_version").notNull(),
+    lowRiskModelVersion: integer("low_risk_model_version").notNull(),
+    horizonDays: integer("horizon_days").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("ml_symbol_score_history_symbol_date_idx").on(t.symbol, t.asOfDate),
+    index("ml_symbol_score_history_symbol_idx").on(t.symbol),
+  ],
 );
 
 /**
@@ -111,3 +148,5 @@ export type MlModelRow = typeof mlModelsTable.$inferSelect;
 export type InsertMlModelRow = typeof mlModelsTable.$inferInsert;
 export type SymbolScoreRow = typeof symbolScoresTable.$inferSelect;
 export type InsertSymbolScoreRow = typeof symbolScoresTable.$inferInsert;
+export type SymbolScoreHistoryRow = typeof symbolScoreHistoryTable.$inferSelect;
+export type InsertSymbolScoreHistoryRow = typeof symbolScoreHistoryTable.$inferInsert;

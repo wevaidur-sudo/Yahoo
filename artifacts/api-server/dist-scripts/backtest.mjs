@@ -59616,10 +59616,21 @@ var YF_INTERVAL = {
   "15m": "15m",
   "1d": "1d"
 };
+var YF_MAX_LOOKBACK = {
+  "1m": 7,
+  // ~7 days of 1-minute history
+  "5m": 58,
+  // ~60 days of 5-minute history (conservative)
+  "15m": 58
+  // "1d" is left undefined — Yahoo daily goes back decades
+};
 var YahooSource = class {
   name = "yahoo";
   supports(interval2) {
     return interval2 in YF_INTERVAL;
+  }
+  maxLookbackDays(interval2) {
+    return YF_MAX_LOOKBACK[interval2];
   }
   async fetchBars(symbol2, interval2, from, to) {
     const result = await yf.chart(symbol2, {
@@ -59758,9 +59769,12 @@ async function fetchBars(symbol2, interval2, from, to, opts = {}) {
   const sources = interval2 === "1d" ? DAILY_SOURCES : INTRADAY_SOURCES;
   for (const source of sources) {
     if (!source.supports(interval2)) continue;
+    const maxDays = source.maxLookbackDays?.(interval2);
+    const effectiveFrom = maxDays ? new Date(Math.max(from.getTime(), to.getTime() - maxDays * DAY_MS)) : from;
+    if (effectiveFrom > to) continue;
     try {
-      const bars = await source.fetchBars(symbol2, interval2, from, to);
-      if (!isCoverageSufficient(bars, from, to, interval2)) {
+      const bars = await source.fetchBars(symbol2, interval2, effectiveFrom, to);
+      if (!isCoverageSufficient(bars, effectiveFrom, to, interval2)) {
         console.info(
           `[data-sources] ${source.name} returned ${bars.length} bars for ${symbol2}/${interval2} \u2014 insufficient coverage, trying next source`
         );

@@ -746,7 +746,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no expla
         debtToEquity: fd?.debtToEquity ?? null,
       };
 
-      quantScore = await computeQuantScore(bars, fundamentals);
+      quantScore = await computeQuantScore(symbol, bars, fundamentals);
     } catch (mlErr) {
       req.log.error({ mlErr, symbol }, "Quant score computation failed");
     }

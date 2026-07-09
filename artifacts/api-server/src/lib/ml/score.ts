@@ -4,10 +4,13 @@
  * (surfaced as "not yet trained") if no model has been trained yet — the
  * API never silently substitutes the old formula for these fields.
  */
-import { db, mlModelsTable } from "@workspace/db";
+import { db, mlModelsTable, symbolScoresTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { GradientBoostedTrees, type SerializedGBM } from "./gbm";
 import { FEATURE_GROUPS, vectorFor, type FeatureName, type FundamentalSnapshot, computeFeaturesAt, type Bar } from "./features";
+
+/** How long a cached per-symbol score is considered fresh before recomputing. */
+const SCORE_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 export interface QuantScoreResult {
   available: boolean;
@@ -40,7 +43,48 @@ function probToScore(p: number): number {
   return Math.max(1, Math.min(10, Math.round(1 + p * 9)));
 }
 
+async function loadCachedScore(symbol: string) {
+  const [row] = await db
+    .select()
+    .from(symbolScoresTable)
+    .where(eq(symbolScoresTable.symbol, symbol))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Persists (upserts) the freshly-computed score so future requests for this
+ * symbol can be served from the DB without recomputing inference/features. */
+async function persistScore(
+  symbol: string,
+  scores: Record<Kind, number>,
+  modelVersion: number,
+): Promise<void> {
+  await db
+    .insert(symbolScoresTable)
+    .values({
+      symbol,
+      overallScore: scores.overall,
+      momentumScore: scores.momentum,
+      valueScore: scores.value,
+      lowRiskScore: scores.lowRisk,
+      modelVersion,
+      computedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: symbolScoresTable.symbol,
+      set: {
+        overallScore: scores.overall,
+        momentumScore: scores.momentum,
+        valueScore: scores.value,
+        lowRiskScore: scores.lowRisk,
+        modelVersion,
+        computedAt: new Date(),
+      },
+    });
+}
+
 export async function computeQuantScore(
+  symbol: string,
   bars: Bar[],
   fundamentals: FundamentalSnapshot,
 ): Promise<QuantScoreResult> {
@@ -58,26 +102,45 @@ export async function computeQuantScore(
     trainSampleSize: null,
   };
 
-  const lastIdx = bars.length - 1;
-  const features = computeFeaturesAt(bars, lastIdx, fundamentals);
-  if (!features) return empty; // not enough history for this symbol yet
-
   const kinds: Kind[] = ["overall", "momentum", "value", "lowRisk"];
   const rows = await Promise.all(kinds.map((k) => loadActiveModel(k)));
   if (rows.some((r) => r == null)) return empty; // need all 4 trained
+  const metaFromOverall = rows[kinds.indexOf("overall")]!;
 
-  const scores: Record<Kind, number> = { overall: 0, momentum: 0, value: 0, lowRisk: 0 };
-  let metaFromOverall: (typeof rows)[number] | null = null;
+  // Serve from the DB-backed cache when it's fresh and matches the currently
+  // active model version — avoids recomputing features/inference on every
+  // request for the same symbol.
+  const cached = await loadCachedScore(symbol);
+  const cacheFresh =
+    cached != null &&
+    cached.modelVersion === metaFromOverall.version &&
+    Date.now() - cached.computedAt.getTime() < SCORE_CACHE_TTL_MS;
 
-  for (let i = 0; i < kinds.length; i++) {
-    const kind = kinds[i];
-    const row = rows[i]!;
-    if (kind === "overall") metaFromOverall = row;
-    const model = GradientBoostedTrees.fromJSON(row.model as SerializedGBM);
-    const group = (row.featureNames as FeatureName[]) ?? FEATURE_GROUPS[kind];
-    const vector = vectorFor(features, group);
-    const prob = model.predictProbaOne(vector);
-    scores[kind] = probToScore(prob);
+  let scores: Record<Kind, number>;
+  if (cacheFresh) {
+    scores = {
+      overall: cached.overallScore,
+      momentum: cached.momentumScore,
+      value: cached.valueScore,
+      lowRisk: cached.lowRiskScore,
+    };
+  } else {
+    const lastIdx = bars.length - 1;
+    const features = computeFeaturesAt(bars, lastIdx, fundamentals);
+    if (!features) return empty; // not enough history for this symbol yet
+
+    scores = { overall: 0, momentum: 0, value: 0, lowRisk: 0 };
+    for (let i = 0; i < kinds.length; i++) {
+      const kind = kinds[i];
+      const row = rows[i]!;
+      const model = GradientBoostedTrees.fromJSON(row.model as SerializedGBM);
+      const group = (row.featureNames as FeatureName[]) ?? FEATURE_GROUPS[kind];
+      const vector = vectorFor(features, group);
+      const prob = model.predictProbaOne(vector);
+      scores[kind] = probToScore(prob);
+    }
+
+    await persistScore(symbol, scores, metaFromOverall.version);
   }
 
   return {
@@ -86,11 +149,11 @@ export async function computeQuantScore(
     momentum: scores.momentum,
     value: scores.value,
     lowRisk: scores.lowRisk,
-    horizonDays: metaFromOverall!.horizonDays,
-    backtestAccuracy: metaFromOverall!.backtestAccuracy,
-    backtestWinRate: metaFromOverall!.backtestWinRate,
-    backtestBaseRate: metaFromOverall!.backtestBaseRate,
-    modelTrainedAt: metaFromOverall!.trainedAt.toISOString(),
-    trainSampleSize: metaFromOverall!.trainSampleSize,
+    horizonDays: metaFromOverall.horizonDays,
+    backtestAccuracy: metaFromOverall.backtestAccuracy,
+    backtestWinRate: metaFromOverall.backtestWinRate,
+    backtestBaseRate: metaFromOverall.backtestBaseRate,
+    modelTrainedAt: metaFromOverall.trainedAt.toISOString(),
+    trainSampleSize: metaFromOverall.trainSampleSize,
   };
 }

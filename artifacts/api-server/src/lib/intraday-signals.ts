@@ -481,7 +481,9 @@ export function generateTradeSetup(params: {
   }
 
   // ── R:R ratios ───────────────────────────────────────────────────────────────
-  const entryMid     = (entryLow ?? spot + entryHigh ?? spot) / 2;
+  const entryMid     = entryLow != null && entryHigh != null
+    ? (entryLow + entryHigh) / 2
+    : (entryLow ?? entryHigh ?? spot);
   const riskPerShare = stopLoss != null ? +Math.abs(entryMid - stopLoss).toFixed(2) : null;
 
   const rrRatio1 = target1 != null && riskPerShare && riskPerShare > 0

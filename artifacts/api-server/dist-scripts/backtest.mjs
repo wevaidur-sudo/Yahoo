@@ -29372,6 +29372,119 @@ function generateTradeSetup(params) {
 }
 
 // src/lib/data-sources/stooq.ts
+import { createHash } from "node:crypto";
+function solvePoW(c, d) {
+  const target = "0".repeat(d);
+  for (let n = 0; ; n++) {
+    const hex = createHash("sha256").update(`${c}${n}`).digest("hex");
+    if (hex.startsWith(target)) return n;
+  }
+}
+function parseChallenge(html) {
+  const m = html.match(/const c="([^"]+)",d=(\d+)/);
+  if (!m) return null;
+  return { c: m[1], d: parseInt(m[2], 10) };
+}
+function extractCookies(headers) {
+  const raw = [];
+  if (typeof headers.getSetCookie === "function") {
+    headers.getSetCookie().forEach((v) => raw.push(v.split(";")[0].trim()));
+  } else {
+    const joined = headers.get("set-cookie");
+    if (joined) {
+      joined.split(",").forEach((v) => raw.push(v.split(";")[0].trim()));
+    }
+  }
+  return raw.join("; ");
+}
+function mergeCookies(base, incoming) {
+  const map2 = /* @__PURE__ */ new Map();
+  for (const part of [base, incoming]) {
+    for (const kv of part.split(";").map((s) => s.trim()).filter(Boolean)) {
+      const eq2 = kv.indexOf("=");
+      if (eq2 > 0) map2.set(kv.slice(0, eq2), kv.slice(eq2 + 1));
+    }
+  }
+  return [...map2.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+var cachedCookie = "";
+var cacheExpiry = 0;
+var BASE_URL = "https://stooq.com";
+var VERIFY_PATH = "/__verify";
+var COMMON_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+  Accept: "text/html,application/xhtml+xml,text/csv,text/plain,*/*",
+  "Accept-Language": "en-US,en;q=0.5"
+};
+async function solveAndVerify(challengeHtml, priorCookies) {
+  const parsed = parseChallenge(challengeHtml);
+  if (!parsed) {
+    console.warn("[stooq] could not parse PoW challenge from response HTML");
+    return null;
+  }
+  const { c, d } = parsed;
+  console.info(`[stooq] solving PoW challenge (difficulty d=${d})\u2026`);
+  const t0 = Date.now();
+  const n = solvePoW(c, d);
+  console.info(`[stooq] PoW solved: n=${n} in ${Date.now() - t0}ms`);
+  const verifyHeaders = {
+    ...COMMON_HEADERS,
+    "Content-Type": "application/x-www-form-urlencoded",
+    Referer: `${BASE_URL}/`,
+    Origin: BASE_URL
+  };
+  if (priorCookies) verifyHeaders["Cookie"] = priorCookies;
+  let verifyResp;
+  try {
+    verifyResp = await fetch(`${BASE_URL}${VERIFY_PATH}`, {
+      method: "POST",
+      headers: verifyHeaders,
+      body: `c=${encodeURIComponent(c)}&n=${n}`,
+      redirect: "manual"
+      // don't follow — we want the Set-Cookie
+    });
+  } catch (err) {
+    console.warn("[stooq] /__verify request failed:", err.message);
+    return null;
+  }
+  const verifyCookies = extractCookies(verifyResp.headers);
+  if (!verifyCookies) {
+    console.warn(`[stooq] /__verify (HTTP ${verifyResp.status}) returned no Set-Cookie header`);
+    return null;
+  }
+  return mergeCookies(priorCookies, verifyCookies);
+}
+async function stooqFetch(url2) {
+  const makeHeaders = (cookie) => ({
+    ...COMMON_HEADERS,
+    ...cookie ? { Cookie: cookie } : {}
+  });
+  let resp = await fetch(url2, {
+    headers: makeHeaders(Date.now() < cacheExpiry ? cachedCookie : ""),
+    signal: AbortSignal.timeout(2e4)
+  });
+  let text2 = await resp.text();
+  if (!resp.ok || text2.trimStart().startsWith("<!")) {
+    const priorCookies = extractCookies(resp.headers);
+    const newCookie = await solveAndVerify(text2, priorCookies);
+    if (!newCookie) {
+      return text2;
+    }
+    resp = await fetch(url2, {
+      headers: makeHeaders(newCookie),
+      signal: AbortSignal.timeout(2e4)
+    });
+    text2 = await resp.text();
+    if (!text2.trimStart().startsWith("<!")) {
+      cachedCookie = newCookie;
+      cacheExpiry = Date.now() + 4 * 60 * 60 * 1e3;
+      console.info("[stooq] session established; cookie cached for 4 h");
+    } else {
+      console.warn("[stooq] still receiving challenge page after verification \u2014 Stooq may have changed its scheme");
+    }
+  }
+  return text2;
+}
 var STOOQ_INTERVAL = {
   "5m": "5",
   "1d": "d"
@@ -29438,26 +29551,17 @@ var StooqSource = class {
     const s = toStooqSymbol(symbol2);
     const d1 = toStooqDate(from);
     const d2 = toStooqDate(to);
-    const url2 = `https://stooq.com/q/d/l/?s=${encodeURIComponent(s)}&i=${stooqInterval}&d1=${d1}&d2=${d2}`;
+    const url2 = `${BASE_URL}/q/d/l/?s=${encodeURIComponent(s)}&i=${stooqInterval}&d1=${d1}&d2=${d2}`;
     let text2;
     try {
-      const resp = await fetch(url2, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; intraday-backtest/1.0)",
-          Accept: "text/csv,text/plain,*/*"
-        },
-        signal: AbortSignal.timeout(2e4)
-      });
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}`);
-      }
-      text2 = await resp.text();
+      text2 = await stooqFetch(url2);
     } catch (err) {
       throw new Error(`Stooq network error for ${symbol2}: ${err.message}`);
     }
     if (!isValidCsv(text2, interval2)) {
+      const reason = text2.trim().toLowerCase() === "access denied" ? "IP-blocked by Stooq (cloud/datacenter IPs blocked even after PoW verification)" : "challenge unsolved or no data";
       console.warn(
-        `[stooq] ${symbol2}/${interval2}: response is not valid CSV (challenge page or no data) \u2014 falling through to next source`
+        `[stooq] ${symbol2}/${interval2}: response is not valid CSV (${reason}) \u2014 falling through to next source`
       );
       return [];
     }

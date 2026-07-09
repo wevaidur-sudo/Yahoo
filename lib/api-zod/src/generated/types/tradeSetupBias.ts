@@ -6,11 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type SignalScoreDirection = typeof SignalScoreDirection[keyof typeof SignalScoreDirection];
+export type TradeSetupBias = typeof TradeSetupBias[keyof typeof TradeSetupBias];
 
 
-export const SignalScoreDirection = {
-  bullish: 'bullish',
-  bearish: 'bearish',
+export const TradeSetupBias = {
+  long: 'long',
+  short: 'short',
   'no-trade': 'no-trade',
 } as const;

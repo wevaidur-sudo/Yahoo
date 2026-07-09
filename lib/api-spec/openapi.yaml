@@ -3,7 +3,7 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: Yahoo Finance Scraper API
+  description: FinanceScope API — Intraday Trading Intelligence
 servers:
   - url: /api
     description: Base API path
@@ -11,14 +11,14 @@ tags:
   - name: health
     description: Health operations
   - name: finance
-    description: Yahoo Finance data
+    description: Yahoo Finance data and intraday analysis
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -59,14 +59,13 @@ paths:
     get:
       operationId: getQuote
       tags: [finance]
-      summary: Get stock quote
+      summary: Get real-time stock quote
       parameters:
         - name: symbol
           in: path
           required: true
           schema:
             type: string
-          description: Stock ticker symbol (e.g. AAPL)
       responses:
         "200":
           description: Stock quote data
@@ -184,7 +183,7 @@ paths:
     get:
       operationId: getStockAnalysis
       tags: [finance]
-      summary: Get AI-powered stock analysis and prediction
+      summary: Full intraday analysis — VWAP, ORB, gap, RVOL, AI overlay, trade setup
       parameters:
         - name: symbol
           in: path
@@ -193,7 +192,7 @@ paths:
             type: string
       responses:
         "200":
-          description: AI analysis with trend prediction, intraday bias, technicals, and options snapshot
+          description: Intraday analysis with deterministic signal score, trade setup, and AI qualitative overlay
           content:
             application/json:
               schema:
@@ -215,7 +214,7 @@ paths:
     post:
       operationId: getOptionsStrategy
       tags: [finance]
-      summary: Get AI-powered options strategy based on investment amount
+      summary: AI-powered options strategy for a given investment amount
       parameters:
         - name: symbol
           in: path
@@ -230,7 +229,7 @@ paths:
               $ref: "#/components/schemas/OptionsStrategyRequest"
       responses:
         "200":
-          description: Optimal options strategy for the given investment amount
+          description: Optimal options strategy with real Black-Scholes metrics
           content:
             application/json:
               schema:
@@ -336,6 +335,8 @@ components:
           type: ["number", "null"]
         postMarketChangePercent:
           type: ["number", "null"]
+        postMarketTime:
+          type: ["string", "null"]
         preMarketPrice:
           type: ["number", "null"]
         preMarketChange:
@@ -344,10 +345,6 @@ components:
           type: ["number", "null"]
         preMarketTime:
           type: ["string", "null"]
-          description: ISO 8601 timestamp of the last pre-market price update
-        postMarketTime:
-          type: ["string", "null"]
-          description: ISO 8601 timestamp of the last post-market price update
       required:
         - symbol
         - name
@@ -465,17 +462,206 @@ components:
         - symbol
         - name
 
+    # ── Intraday level data ────────────────────────────────────────────────────
+
+    IntradayLevels:
+      type: object
+      description: >
+        Deterministic intraday levels computed from real bar data on every
+        request. Null fields mean the market hasn't opened yet or the specific
+        data isn't available (e.g., ORB before 9:45 ET, VWAP before session open).
+      properties:
+        vwap:
+          type: ["number", "null"]
+          description: Volume-Weighted Average Price anchored to today's 9:30 AM ET open
+        vwapUpper1:
+          type: ["number", "null"]
+          description: VWAP + 1 standard deviation band
+        vwapLower1:
+          type: ["number", "null"]
+          description: VWAP - 1 standard deviation band
+        vwapUpper2:
+          type: ["number", "null"]
+          description: VWAP + 2 standard deviation band
+        vwapLower2:
+          type: ["number", "null"]
+          description: VWAP - 2 standard deviation band
+        orbHigh:
+          type: ["number", "null"]
+          description: Opening Range high (9:30–9:45 ET)
+        orbLow:
+          type: ["number", "null"]
+          description: Opening Range low (9:30–9:45 ET)
+        orbRange:
+          type: ["number", "null"]
+          description: ORB high minus ORB low
+        orbBroken:
+          type: ["string", "null"]
+          description: "up | down | none | null. null = still inside the ORB window (before 9:45 ET)"
+        pdHigh:
+          type: ["number", "null"]
+          description: Previous day's high
+        pdLow:
+          type: ["number", "null"]
+          description: Previous day's low
+        pdClose:
+          type: ["number", "null"]
+          description: Previous day's closing price
+        preMarketHigh:
+          type: ["number", "null"]
+          description: Today's pre-market session high (4:00–9:30 AM ET)
+        preMarketLow:
+          type: ["number", "null"]
+          description: Today's pre-market session low
+        gap:
+          type: ["number", "null"]
+          description: Gap percentage from previous close to today's session open (positive = gap up)
+        gapDirection:
+          type: ["string", "null"]
+          description: "up | down | flat | null"
+        gapFilled:
+          type: ["boolean", "null"]
+          description: Whether the gap has been filled during today's session
+        sessionOpen:
+          type: ["number", "null"]
+          description: Today's regular session opening price (first bar's open at 9:30 ET)
+        cumulativeVolume:
+          type: ["number", "null"]
+          description: Total shares traded in the regular session so far today
+        rvol:
+          type: ["number", "null"]
+          description: Relative volume vs expected volume at this time of day (1.0 = average)
+        avgDailyVolume:
+          type: ["number", "null"]
+          description: 3-month average daily volume
+        intradayAtr:
+          type: ["number", "null"]
+          description: Average True Range from the last 5 daily bars — used for stop sizing
+
+    # ── Trade setup ───────────────────────────────────────────────────────────
+
+    TradeSetup:
+      type: object
+      description: >
+        Deterministic intraday trade setup computed from key levels and signal score.
+        Entry zone, stop, and targets are derived from VWAP, ORB, PDH/PDL, and ATR.
+        This is a mechanical setup — not financial advice.
+      properties:
+        bias:
+          type: string
+          enum: [long, short, no-trade]
+        setupType:
+          type: string
+          description: "e.g. 'ORB Breakout', 'VWAP Reclaim', 'PDH Breakout'"
+        entryLow:
+          type: ["number", "null"]
+          description: Low end of the ideal entry zone
+        entryHigh:
+          type: ["number", "null"]
+          description: High end of the ideal entry zone
+        stopLoss:
+          type: ["number", "null"]
+          description: Suggested stop-loss price based on key intraday support/resistance
+        target1:
+          type: ["number", "null"]
+          description: First intraday price target (nearest key level or 1x ORB extension)
+        target2:
+          type: ["number", "null"]
+          description: Second intraday price target (further key level or 2x ORB extension)
+        rrRatio1:
+          type: ["number", "null"]
+          description: Risk-reward ratio to Target 1
+        rrRatio2:
+          type: ["number", "null"]
+          description: Risk-reward ratio to Target 2
+        riskPerShare:
+          type: ["number", "null"]
+          description: Absolute dollar risk per share (entry mid to stop)
+        bestWindow:
+          type: string
+          description: Time-of-day guidance for highest-probability entry
+        noTradeReason:
+          type: ["string", "null"]
+          description: Reason for no-trade signal; null when a trade setup exists
+        confidence:
+          type: number
+          description: 0–100 conviction score from the signal engine
+      required:
+        - bias
+        - setupType
+        - bestWindow
+        - confidence
+
+    # ── Intraday signal score ──────────────────────────────────────────────────
+
+    TechnicalSignal:
+      type: object
+      properties:
+        name:
+          type: string
+        signal:
+          type: string
+          enum: [bullish, bearish, neutral]
+        weight:
+          type: number
+        value:
+          type: string
+        note:
+          type: string
+      required:
+        - name
+        - signal
+        - weight
+        - value
+        - note
+
+    SignalScore:
+      type: object
+      description: >
+        Intraday signal confluence score computed deterministically from live bar data:
+        VWAP position, Opening Range status, multi-timeframe RSI (5m+15m), gap analysis,
+        pre-market levels, PDH/PDL, 15m MACD, and RVOL. Not AI — pure formula-based.
+      properties:
+        direction:
+          type: string
+          enum: [bullish, bearish, no-trade]
+        conviction:
+          type: number
+          description: Conviction score 0 (no edge) to 100 (maximum conviction)
+        bullishCount:
+          type: number
+        bearishCount:
+          type: number
+        neutralCount:
+          type: number
+        noTradeReason:
+          type: ["string", "null"]
+        signals:
+          type: array
+          items:
+            $ref: "#/components/schemas/TechnicalSignal"
+      required:
+        - direction
+        - conviction
+        - bullishCount
+        - bearishCount
+        - neutralCount
+        - signals
+
+    # ── AI overlay schemas ─────────────────────────────────────────────────────
+
     PriceTargets:
       type: object
       properties:
         support:
           type: ["number", "null"]
+          description: Nearest intraday support level
         resistance:
           type: ["number", "null"]
-        oneWeek:
+          description: Nearest intraday resistance level
+        sessionTarget:
           type: ["number", "null"]
-        oneMonth:
-          type: ["number", "null"]
+          description: Realistic price target for today's session
 
     TrendPrediction:
       type: object
@@ -532,34 +718,6 @@ components:
         - setup
         - keyLevels
         - topPick
-
-    TechnicalIndicators:
-      type: object
-      properties:
-        rsi:
-          type: ["number", "null"]
-        macd:
-          type: ["number", "null"]
-        macdSignal:
-          type: ["number", "null"]
-        macdHistogram:
-          type: ["number", "null"]
-        bollingerUpper:
-          type: ["number", "null"]
-        bollingerMiddle:
-          type: ["number", "null"]
-        bollingerLower:
-          type: ["number", "null"]
-        sma20:
-          type: ["number", "null"]
-        sma50:
-          type: ["number", "null"]
-        sma200:
-          type: ["number", "null"]
-        atr:
-          type: ["number", "null"]
-        volumeRatio:
-          type: ["number", "null"]
 
     OptionPick:
       type: object
@@ -620,57 +778,7 @@ components:
         - sentiment
         - unusualActivity
 
-    TechnicalSignal:
-      type: object
-      properties:
-        name:
-          type: string
-        signal:
-          type: string
-          enum: [bullish, bearish, neutral]
-        weight:
-          type: number
-        value:
-          type: string
-        note:
-          type: string
-      required:
-        - name
-        - signal
-        - weight
-        - value
-        - note
-
-    SignalScore:
-      type: object
-      description: >
-        Rules-based signal confluence score computed deterministically from
-        standard financial formulas (Wilder RSI, SMA-seeded EMA, MACD, Bollinger
-        Bands, moving average alignment, volume). Not an AI estimate.
-      properties:
-        direction:
-          type: string
-          enum: [bullish, bearish, neutral]
-        score:
-          type: number
-          description: Normalised weighted score from -100 (max bearish) to +100 (max bullish)
-        bullishCount:
-          type: number
-        bearishCount:
-          type: number
-        neutralCount:
-          type: number
-        signals:
-          type: array
-          items:
-            $ref: "#/components/schemas/TechnicalSignal"
-      required:
-        - direction
-        - score
-        - bullishCount
-        - bearishCount
-        - neutralCount
-        - signals
+    # ── Root analysis response ─────────────────────────────────────────────────
 
     StockAnalysis:
       type: object
@@ -679,14 +787,16 @@ components:
           type: string
         generatedAt:
           type: string
+        intradayLevels:
+          $ref: "#/components/schemas/IntradayLevels"
         signalScore:
           $ref: "#/components/schemas/SignalScore"
+        tradeSetup:
+          $ref: "#/components/schemas/TradeSetup"
         trend:
           $ref: "#/components/schemas/TrendPrediction"
         intraday:
           $ref: "#/components/schemas/IntradayAnalysis"
-        technicalIndicators:
-          $ref: "#/components/schemas/TechnicalIndicators"
         optionsSnapshot:
           $ref: "#/components/schemas/OptionsSnapshot"
         dataQuality:
@@ -694,10 +804,13 @@ components:
       required:
         - symbol
         - generatedAt
+        - intradayLevels
         - signalScore
+        - tradeSetup
         - trend
         - intraday
-        - technicalIndicators
+
+    # ── Options strategy ───────────────────────────────────────────────────────
 
     StrategyLeg:
       type: object

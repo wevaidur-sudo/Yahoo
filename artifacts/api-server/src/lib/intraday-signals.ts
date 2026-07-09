@@ -493,6 +493,22 @@ export function generateTradeSetup(params: {
     ? +(Math.abs(target2 - entryMid) / riskPerShare).toFixed(1)
     : null;
 
+  // ── R:R quality filter ───────────────────────────────────────────────────────
+  // A setup with less than 1:1 reward-to-risk on its first target isn't a
+  // professionally acceptable trade, regardless of directional conviction.
+  const MIN_RR = 1;
+  if (rrRatio1 != null && rrRatio1 < MIN_RR) {
+    return {
+      bias: "no-trade", setupType: "No Setup",
+      entryLow: null, entryHigh: null,
+      stopLoss: null, target1: null, target2: null,
+      rrRatio1: null, rrRatio2: null, riskPerShare: null,
+      bestWindow,
+      noTradeReason: `Reward-to-risk too thin (${rrRatio1.toFixed(1)}:1 on T1, below ${MIN_RR}:1 minimum) — nearest target is too close to the stop`,
+      confidence: signalScore.conviction,
+    };
+  }
+
   return {
     bias, setupType,
     entryLow:    entryLow   != null ? +entryLow.toFixed(2)   : null,

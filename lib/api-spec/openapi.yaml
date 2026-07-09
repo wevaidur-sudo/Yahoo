@@ -165,6 +165,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /finance/delisted/{symbol}:
+    get:
+      operationId: getDelistedLookup
+      tags: [finance]
+      summary: Look up a symbol via Tiingo (covers tickers no longer listed on Yahoo Finance)
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Symbol metadata from Tiingo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DelistedLookupResult"
+        "404":
+          description: Symbol not found on Tiingo either
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /finance/trending:
     get:
       operationId: getTrending
@@ -283,6 +308,13 @@ components:
           type: string
         score:
           type: ["number", "null"]
+        source:
+          type: string
+          enum: [yahoo, tiingo]
+          description: Which data provider this result came from
+        delisted:
+          type: boolean
+          description: True if the symbol is no longer actively traded (only returned by the Tiingo fallback)
       required:
         - symbol
         - name
@@ -348,6 +380,13 @@ components:
         postMarketTime:
           type: ["string", "null"]
           description: ISO 8601 timestamp of the last post-market price update
+        source:
+          type: string
+          enum: [yahoo, tiingo]
+          description: Which data provider this quote came from
+        delisted:
+          type: boolean
+          description: True if the symbol is no longer actively traded (only set by the Tiingo fallback)
       required:
         - symbol
         - name
@@ -371,6 +410,27 @@ components:
           type: ["number", "null"]
       required:
         - date
+
+    DelistedLookupResult:
+      type: object
+      description: Metadata for a symbol resolved via the Tiingo delisted-stock fallback
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        exchange:
+          type: ["string", "null"]
+        startDate:
+          type: ["string", "null"]
+        endDate:
+          type: ["string", "null"]
+        delisted:
+          type: boolean
+      required:
+        - symbol
+        - name
+        - delisted
 
     NewsArticle:
       type: object

@@ -19,7 +19,10 @@ import {
   GetCompanySummaryParams,
   GetCompanySummaryResponse,
   GetTrendingResponse,
+  GetDelistedLookupParams,
+  GetDelistedLookupResponse,
 } from "@workspace/api-zod";
+import { tiingo } from "../lib/tiingo";
 
 const router: IRouter = Router();
 
@@ -41,7 +44,7 @@ router.get("/finance/search", async (req, res): Promise<void> => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const quotes: any[] = results.quotes || [];
 
-    const data = quotes
+    const data: unknown[] = quotes
       .filter((item: any) => item.symbol)
       .map((item: any) => ({
         symbol: item.symbol,
@@ -49,7 +52,30 @@ router.get("/finance/search", async (req, res): Promise<void> => {
         exchange: item.exchange || "N/A",
         type: item.quoteType || "EQUITY",
         score: item.score ?? null,
+        source: "yahoo",
       }));
+
+    // Yahoo drops delisted tickers entirely. If nothing came back and the
+    // query looks like a bare ticker symbol, try resolving it via Tiingo so
+    // users can still find historically delisted stocks.
+    if (data.length === 0 && tiingo.isConfigured() && /^[A-Za-z.\-]{1,10}$/.test(q)) {
+      try {
+        const meta = await tiingo.getMeta(q);
+        if (meta) {
+          data.push({
+            symbol: meta.ticker,
+            name: meta.name || meta.ticker,
+            exchange: meta.exchangeCode || "N/A",
+            type: "EQUITY",
+            score: null,
+            source: "tiingo",
+            delisted: tiingo.isDelisted(meta),
+          });
+        }
+      } catch (err) {
+        req.log.error({ err, q }, "Tiingo search fallback error");
+      }
+    }
 
     res.json(SearchSymbolsResponse.parse(data));
   } catch (err) {
@@ -213,19 +239,83 @@ router.get("/finance/quote/:symbol", async (req, res): Promise<void> => {
       preMarketChange,
       preMarketChangePercent,
       preMarketTime,
+      source: "yahoo",
     };
 
     res.json(GetQuoteResponse.parse(data));
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    const notFound = msg.includes("No fundamentals data") || msg.includes("symbol may be delisted");
+
+    if (notFound && tiingo.isConfigured()) {
+      try {
+        const tiingoQuote = await tryTiingoQuote(symbol);
+        if (tiingoQuote) {
+          res.json(GetQuoteResponse.parse(tiingoQuote));
+          return;
+        }
+      } catch (tiingoErr) {
+        req.log.error({ err: tiingoErr, symbol }, "Tiingo quote fallback error");
+      }
+    }
+
     req.log.error({ err, symbol }, "Quote error");
-    if (msg.includes("No fundamentals data")) {
+    if (notFound) {
       res.status(404).json({ error: `Symbol not found: ${symbol}` });
     } else {
       res.status(500).json({ error: "Failed to fetch quote" });
     }
   }
 });
+
+// Builds a minimal StockQuote from Tiingo metadata + latest EOD price, for
+// symbols Yahoo no longer serves (delisted tickers).
+async function tryTiingoQuote(symbol: string) {
+  const meta = await tiingo.getMeta(symbol);
+  if (!meta) return null;
+
+  const prices = await tiingo.getPrices(symbol);
+  const last = prices[prices.length - 1] ?? null;
+  const prev = prices[prices.length - 2] ?? null;
+
+  const price = last?.close ?? null;
+  const previousClose = prev?.close ?? null;
+  const change = price != null && previousClose != null ? Math.round((price - previousClose) * 10000) / 10000 : null;
+  const changePercent =
+    change != null && previousClose ? Math.round(((change / previousClose) * 100) * 10000) / 10000 : null;
+
+  return {
+    symbol: meta.ticker,
+    name: meta.name || meta.ticker,
+    price,
+    open: last?.open ?? null,
+    high: last?.high ?? null,
+    low: last?.low ?? null,
+    previousClose,
+    change,
+    changePercent,
+    volume: last?.volume ?? null,
+    avgVolume: null,
+    marketCap: null,
+    peRatio: null,
+    eps: null,
+    fiftyTwoWeekHigh: null,
+    fiftyTwoWeekLow: null,
+    currency: "USD",
+    exchange: meta.exchangeCode ?? null,
+    marketState: "CLOSED",
+    postMarketPrice: null,
+    postMarketChange: null,
+    postMarketChangePercent: null,
+    postMarketTime: null,
+    preMarketPrice: null,
+    preMarketChange: null,
+    preMarketChangePercent: null,
+    preMarketTime: null,
+    source: "tiingo",
+    delisted: tiingo.isDelisted(meta),
+  };
+}
 
 // GET /finance/history/:symbol/:period
 router.get(
@@ -301,8 +391,31 @@ router.get(
       res.json(GetPriceHistoryResponse.parse(data));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      const notFound = msg.includes("No fundamentals data") || msg.includes("symbol may be delisted");
+
+      if (notFound && tiingo.isConfigured()) {
+        try {
+          const rows = await tiingo.getPrices(symbol, { startDate });
+          if (rows.length > 0) {
+            const data = rows.map((row) => ({
+              date: new Date(row.date).toISOString(),
+              open: row.open,
+              high: row.high,
+              low: row.low,
+              close: row.close,
+              volume: row.volume,
+              adjClose: row.adjClose,
+            }));
+            res.json(GetPriceHistoryResponse.parse(data));
+            return;
+          }
+        } catch (tiingoErr) {
+          req.log.error({ err: tiingoErr, symbol, period }, "Tiingo history fallback error");
+        }
+      }
+
       req.log.error({ err, symbol, period }, "History error");
-      if (msg.includes("No fundamentals data")) {
+      if (notFound) {
         res.status(404).json({ error: `Symbol not found: ${symbol}` });
       } else {
         res.status(500).json({ error: "Failed to fetch price history" });
@@ -310,6 +423,45 @@ router.get(
     }
   },
 );
+
+// GET /finance/delisted/:symbol — Tiingo-backed lookup for symbols no longer
+// served by Yahoo Finance.
+router.get("/finance/delisted/:symbol", async (req, res): Promise<void> => {
+  const params = GetDelistedLookupParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const { symbol } = params.data;
+
+  if (!tiingo.isConfigured()) {
+    res.status(404).json({ error: "Delisted-stock lookup is not configured" });
+    return;
+  }
+
+  try {
+    const meta = await tiingo.getMeta(symbol);
+    if (!meta) {
+      res.status(404).json({ error: `Symbol not found: ${symbol}` });
+      return;
+    }
+
+    const data = {
+      symbol: meta.ticker,
+      name: meta.name || meta.ticker,
+      exchange: meta.exchangeCode ?? null,
+      startDate: meta.startDate ?? null,
+      endDate: meta.endDate ?? null,
+      delisted: tiingo.isDelisted(meta),
+    };
+
+    res.json(GetDelistedLookupResponse.parse(data));
+  } catch (err) {
+    req.log.error({ err, symbol }, "Delisted lookup error");
+    res.status(500).json({ error: "Failed to look up symbol" });
+  }
+});
 
 // GET /finance/news/:symbol
 router.get("/finance/news/:symbol", async (req, res): Promise<void> => {

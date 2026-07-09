@@ -30,6 +30,17 @@ export interface ErrorResponse {
   error: string;
 }
 
+/**
+ * Which data provider this result came from
+ */
+export type SearchResultSource = typeof SearchResultSource[keyof typeof SearchResultSource];
+
+
+export const SearchResultSource = {
+  yahoo: 'yahoo',
+  tiingo: 'tiingo',
+} as const;
+
 export interface SearchResult {
   symbol: string;
   name: string;
@@ -37,7 +48,22 @@ export interface SearchResult {
   type: string;
   /** @nullable */
   score?: number | null;
+  /** Which data provider this result came from */
+  source?: SearchResultSource;
+  /** True if the symbol is no longer actively traded (only returned by the Tiingo fallback) */
+  delisted?: boolean;
 }
+
+/**
+ * Which data provider this quote came from
+ */
+export type StockQuoteSource = typeof StockQuoteSource[keyof typeof StockQuoteSource];
+
+
+export const StockQuoteSource = {
+  yahoo: 'yahoo',
+  tiingo: 'tiingo',
+} as const;
 
 export interface StockQuote {
   symbol: string;
@@ -98,6 +124,10 @@ export interface StockQuote {
      * @nullable
      */
   postMarketTime?: string | null;
+  /** Which data provider this quote came from */
+  source?: StockQuoteSource;
+  /** True if the symbol is no longer actively traded (only set by the Tiingo fallback) */
+  delisted?: boolean;
 }
 
 export interface PricePoint {
@@ -114,6 +144,21 @@ export interface PricePoint {
   volume?: number | null;
   /** @nullable */
   adjClose?: number | null;
+}
+
+/**
+ * Metadata for a symbol resolved via the Tiingo delisted-stock fallback
+ */
+export interface DelistedLookupResult {
+  symbol: string;
+  name: string;
+  /** @nullable */
+  exchange?: string | null;
+  /** @nullable */
+  startDate?: string | null;
+  /** @nullable */
+  endDate?: string | null;
+  delisted: boolean;
 }
 
 export interface NewsArticle {

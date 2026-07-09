@@ -29,7 +29,9 @@ export const SearchSymbolsResponseItem = zod.object({
   "name": zod.string(),
   "exchange": zod.string(),
   "type": zod.string(),
-  "score": zod.number().nullish()
+  "score": zod.number().nullish(),
+  "source": zod.enum(['yahoo', 'tiingo']).optional().describe('Which data provider this result came from'),
+  "delisted": zod.boolean().optional().describe('True if the symbol is no longer actively traded (only returned by the Tiingo fallback)')
 })
 export const SearchSymbolsResponse = zod.array(SearchSymbolsResponseItem)
 
@@ -68,7 +70,9 @@ export const GetQuoteResponse = zod.object({
   "preMarketChange": zod.number().nullish(),
   "preMarketChangePercent": zod.number().nullish(),
   "preMarketTime": zod.string().nullish().describe('ISO 8601 timestamp of the last pre-market price update'),
-  "postMarketTime": zod.string().nullish().describe('ISO 8601 timestamp of the last post-market price update')
+  "postMarketTime": zod.string().nullish().describe('ISO 8601 timestamp of the last post-market price update'),
+  "source": zod.enum(['yahoo', 'tiingo']).optional().describe('Which data provider this quote came from'),
+  "delisted": zod.boolean().optional().describe('True if the symbol is no longer actively traded (only set by the Tiingo fallback)')
 })
 
 
@@ -142,6 +146,23 @@ export const GetCompanySummaryResponse = zod.object({
   "dividendYield": zod.number().nullish(),
   "beta": zod.number().nullish()
 })
+
+
+/**
+ * @summary Look up a symbol via Tiingo (covers tickers no longer listed on Yahoo Finance)
+ */
+export const GetDelistedLookupParams = zod.object({
+  "symbol": zod.coerce.string()
+})
+
+export const GetDelistedLookupResponse = zod.object({
+  "symbol": zod.string(),
+  "name": zod.string(),
+  "exchange": zod.string().nullish(),
+  "startDate": zod.string().nullish(),
+  "endDate": zod.string().nullish(),
+  "delisted": zod.boolean()
+}).describe('Metadata for a symbol resolved via the Tiingo delisted-stock fallback')
 
 
 /**

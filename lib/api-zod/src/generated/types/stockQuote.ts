@@ -5,6 +5,7 @@
  * Yahoo Finance Scraper API
  * OpenAPI spec version: 0.1.0
  */
+import type { StockQuoteSource } from './stockQuoteSource';
 
 export interface StockQuote {
   symbol: string;
@@ -65,4 +66,8 @@ export interface StockQuote {
      * @nullable
      */
   postMarketTime?: string | null;
+  /** Which data provider this quote came from */
+  source?: StockQuoteSource;
+  /** True if the symbol is no longer actively traded (only set by the Tiingo fallback) */
+  delisted?: boolean;
 }

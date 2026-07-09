@@ -8,6 +8,7 @@
 
 export * from './companySummary';
 export * from './dataQuality';
+export * from './delistedLookupResult';
 export * from './errorResponse';
 export * from './healthStatus';
 export * from './historyPeriod';
@@ -26,11 +27,13 @@ export * from './pricePoint';
 export * from './priceTargets';
 export * from './quantScore';
 export * from './searchResult';
+export * from './searchResultSource';
 export * from './searchSymbolsParams';
 export * from './signalScore';
 export * from './signalScoreDirection';
 export * from './stockAnalysis';
 export * from './stockQuote';
+export * from './stockQuoteSource';
 export * from './strategyLeg';
 export * from './strategyLegAction';
 export * from './strategyLegType';

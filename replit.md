@@ -11,7 +11,7 @@ A market intelligence app that lets users search and browse real-time stock, cry
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
 - Required secret: `GEMINI_API_KEY` — used by the AI analysis route
-- Secret present but not yet wired into code: `TIINGO_API_KEY` — intended for adding delisted-stock data (follow-up feature, not yet implemented)
+- Optional secret: `TIINGO_API_KEY` — enables the delisted-stock fallback (search/quote/history) when Yahoo Finance no longer serves a symbol; app works without it, just without delisted-ticker coverage
 
 ## Stack
 
@@ -40,7 +40,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Yahoo Finance drops delisted tickers entirely. `finance.ts` falls back to Tiingo (`lib/tiingo.ts`) for search, quote, and history when Yahoo returns "no data"/"may be delisted" — results carry `source: "tiingo"` and `delisted: true`. The `/finance/delisted/:symbol` endpoint exposes raw Tiingo metadata (listing dates).
 
 ## Pointers
 

@@ -43,6 +43,21 @@ Uses Replit's built-in PostgreSQL (`DATABASE_URL` is auto-injected). To push sch
 pnpm --filter @workspace/db push
 ```
 
+The schema includes an `ohlcv_bars` table that caches OHLCV bars fetched during backtests. Run the above push command once after provisioning the database so the cache is available.
+
+## Backtesting
+
+```bash
+pnpm --filter @workspace/api-server run backtest
+```
+
+Data sources tried in order for intraday (5m) bars:
+1. **DB cache** (`ohlcv_bars`) — zero network cost, populated on first run
+2. **Stooq** — free, no sign-up, years of history for liquid US equities/ETFs
+3. **Yahoo Finance** — ~58-day fallback (automatically clamped to its supported window)
+
+For daily (1d) bars the order is Yahoo → Stooq → DB cache.
+
 ## Required Secrets
 
 | Secret | Purpose |

@@ -7,30 +7,25 @@
  * code path used in production (`computeIntradayLevels`, `computeIntradaySignals`,
  * `generateTradeSetup`) against real historical bars.
  *
+ * DATA SOURCES (tried in priority order):
+ *  1. DB cache (ohlcv_bars table) — zero network cost, populated on first run
+ *  2. Stooq   — free, no sign-up, years of 5m history for US equities/ETFs
+ *  3. Yahoo   — ~60-day 5m fallback; also primary for daily bars
+ *
  * KNOWN LIMITATIONS (read before trusting the numbers):
- *  - Yahoo's free 5m bars only go back ~60 days, and do NOT include pre/post
- *    market bars, so pre-market H/L signals are always null in this backtest
- *    (they DO work live, where the app fetches 1m bars with pre/post included).
- *  - No commissions, spread, or slippage modeled — entries/exits assume fills
- *    at the exact printed price.
- *  - Only 3 fixed decision times per day are tested, not continuous monitoring.
- *  - Sample size (~8 symbols x ~45 usable days x 3 windows) is a starting
- *    point, not statistically conclusive — treat this as a smoke test for
- *    "is the expectancy at least positive and are the weights directionally
- *    sane," not a certification of profitability.
+ *  - No pre/post market bars in historical 5m data (pre-market signals work
+ *    live because the app fetches 1m bars with pre/post included).
+ *  - No commissions, spread, or slippage modeled — fills assumed at printed price.
+ *  - Only 3 fixed decision times per day tested, not continuous monitoring.
  */
 
-import YahooFinance from "yahoo-finance2";
 import {
-  parseYahooBars,
   computeIntradayLevels,
   getETOffset,
   type IntradayBar,
 } from "../lib/intraday";
 import { computeIntradaySignals, generateTradeSetup } from "../lib/intraday-signals";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const yahooFinance = new (YahooFinance as any)({ suppressNotices: ["yahooSurvey"] });
+import { fetchBars as fetchBarsMultiSource } from "../lib/data-sources/manager";
 
 const SYMBOLS = [
   "AAPL", "MSFT", "NVDA", "AMZN", "TSLA", "META", "GOOGL", "SPY",
@@ -47,6 +42,9 @@ const TRAIN_FRACTION = 0.65;
 // Decision times to test, in ET decimal hours — matches the app's own
 // "best entry window" guidance (opening momentum, late morning, afternoon).
 const DECISION_TIMES_ET = [10.25, 11.0, 13.75];
+
+// Minimum trailing daily bars needed before ATR/avg-volume can be trusted.
+const MIN_DAILY_HISTORY = 25;
 
 // ─── Local copies of the indicator helpers used in analysis.ts ────────────────
 // (Kept local rather than importing from the route file, which isn't a module
@@ -138,15 +136,9 @@ interface TradeResult {
 }
 
 async function fetchBars(symbol: string, interval: "5m" | "1d", days: number): Promise<IntradayBar[]> {
-  const period2 = new Date();
-  const period1 = new Date(period2.getTime() - days * 86400_000);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const result = (await (yahooFinance as any).chart(symbol, {
-    period1,
-    period2,
-    interval,
-  })) as any;
-  return parseYahooBars(result?.quotes ?? []);
+  const to   = new Date();
+  const from = new Date(to.getTime() - days * 86_400_000);
+  return fetchBarsMultiSource(symbol, interval, from, to, { retryDelayMs: 500 });
 }
 
 async function backtestSymbol(symbol: string): Promise<{ trades: TradeResult[]; noTradeCount: number; errors: number }> {
@@ -158,11 +150,29 @@ async function backtestSymbol(symbol: string): Promise<{ trades: TradeResult[]; 
   let dailyBars: IntradayBar[];
   try {
     [bars5m, dailyBars] = await Promise.all([
-      fetchBars(symbol, "5m", 58),
-      fetchBars(symbol, "1d", 150),
+      fetchBars(symbol, "5m", 365),  // Stooq provides ~years; Yahoo fallback covers ~60 days
+      fetchBars(symbol, "1d", 500),  // Yahoo/Stooq daily goes back years
     ]);
   } catch (err) {
     console.error(`  [${symbol}] fetch failed:`, (err as Error).message);
+    return { trades, noTradeCount, errors: 1 };
+  }
+
+  // Hard guards: refuse to run on dangerously thin data.
+  // A zero-result run with no logged errors is more misleading than a hard fail.
+  const uniqueDays5m = new Set(bars5m.map((b) => etDateKey(b.timestamp))).size;
+  if (bars5m.length === 0 || uniqueDays5m < 15) {
+    console.error(
+      `  [${symbol}] 5m data insufficient: ${uniqueDays5m} trading day(s) fetched` +
+      ` (need ≥ 15). All sources may have failed or been rate-limited. Skipping.`,
+    );
+    return { trades, noTradeCount, errors: 1 };
+  }
+  if (dailyBars.length < MIN_DAILY_HISTORY) {
+    console.error(
+      `  [${symbol}] daily bar data insufficient: ${dailyBars.length} bars fetched` +
+      ` (need ≥ ${MIN_DAILY_HISTORY} for ATR/avg-volume). All sources may have failed. Skipping.`,
+    );
     return { trades, noTradeCount, errors: 1 };
   }
 
@@ -175,9 +185,6 @@ async function backtestSymbol(symbol: string): Promise<{ trades: TradeResult[]; 
   }
   const days = [...byDay.keys()].sort();
   const splitIdx = Math.floor(days.length * TRAIN_FRACTION);
-
-  // Need ~25 daily bars of trailing history before we trust ATR/avgVolume.
-  const MIN_DAILY_HISTORY = 25;
 
   for (const [dayIdx, day] of days.entries()) {
     const phase: "train" | "test" = dayIdx < splitIdx ? "train" : "test";
@@ -394,7 +401,7 @@ Generated: ${new Date().toISOString()}
 
 ## Methodology
 - Symbols (${SYMBOLS.length}): ${SYMBOLS.join(", ")}
-- Data: Yahoo Finance 5m bars (~58 days, no pre/post market) + 1d bars (~150 days) for PDH/PDL/ATR/avg-volume
+- Data: Stooq 5m bars (years of history, no pre/post market; Yahoo as fallback ~60 days) + daily bars (~500 days) for PDH/PDL/ATR/avg-volume. Results cached in ohlcv_bars DB table.
 - Decision windows tested per trading day (ET): ${DECISION_TIMES_ET.map((t) => `${Math.floor(t)}:${String(Math.round((t % 1) * 60)).padStart(2, "0")}`).join(", ")}
 - Uses the exact production code path: \`computeIntradayLevels\` → \`computeIntradaySignals\` → \`generateTradeSetup\`
 - **Walk-forward split**: first ${Math.round(TRAIN_FRACTION * 100)}% of each symbol's trading days = TRAIN (used only to derive the setup-type quality gate below), last ${Math.round((1 - TRAIN_FRACTION) * 100)}% = TEST (held out, scored with the gate frozen from TRAIN — this is genuine out-of-sample evidence, not a re-fit)

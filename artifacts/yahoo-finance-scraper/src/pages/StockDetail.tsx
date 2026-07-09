@@ -70,27 +70,43 @@ export default function StockDetail() {
 
   const extendedPrice = (() => {
     if (!quote) return null;
-    const { marketState, preMarketPrice, preMarketChange, preMarketChangePercent, postMarketPrice, postMarketChange, postMarketChangePercent } = quote;
-    if (marketState === "PRE" || marketState === "PREPRE") {
-      // preMarketPrice only populates once pre-market trading begins (4 AM ET).
-      // Before that, show last night's after-hours price as the best available reference.
+    const {
+      marketState,
+      preMarketPrice, preMarketChange, preMarketChangePercent, preMarketTime,
+      postMarketPrice, postMarketChange, postMarketChangePercent, postMarketTime,
+    } = quote;
+
+    const fmt = (iso: string | null | undefined) => {
+      if (!iso) return null;
+      return new Date(iso).toLocaleTimeString("en-US", {
+        hour: "numeric", minute: "2-digit", timeZone: "America/New_York", timeZoneName: "short",
+      });
+    };
+
+    // Active pre-market session (4 AM – 9:30 AM ET)
+    if (marketState === "PRE") {
+      return { price: preMarketPrice, change: preMarketChange, pct: preMarketChangePercent, label: "Pre-Market", asOf: fmt(preMarketTime) };
+    }
+    // Active post-market session (4 PM – 8 PM ET)
+    if (marketState === "POST" || marketState === "POSTPOST") {
+      return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours", asOf: fmt(postMarketTime) };
+    }
+    // PREPRE: before 4 AM ET — show last post-market close as reference if pre-market hasn't printed yet
+    if (marketState === "PREPRE") {
       if (preMarketPrice != null) {
-        return { price: preMarketPrice, change: preMarketChange, pct: preMarketChangePercent, label: "Pre-Market" };
+        return { price: preMarketPrice, change: preMarketChange, pct: preMarketChangePercent, label: "Pre-Market", asOf: fmt(preMarketTime) };
       }
       if (postMarketPrice != null) {
-        return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours" };
+        return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours", asOf: fmt(postMarketTime) };
       }
     }
-    if (marketState === "POST" || marketState === "POSTPOST") {
-      return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours" };
-    }
-    // Market is CLOSED but extended-hours data is still available from Yahoo Finance
+    // CLOSED: extended-hours data still available from Yahoo
     if (marketState === "CLOSED") {
       if (postMarketPrice != null) {
-        return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours" };
+        return { price: postMarketPrice, change: postMarketChange, pct: postMarketChangePercent, label: "After Hours", asOf: fmt(postMarketTime) };
       }
       if (preMarketPrice != null) {
-        return { price: preMarketPrice, change: preMarketChange, pct: preMarketChangePercent, label: "Pre-Market" };
+        return { price: preMarketPrice, change: preMarketChange, pct: preMarketChangePercent, label: "Pre-Market", asOf: fmt(preMarketTime) };
       }
     }
     return null;
@@ -160,23 +176,30 @@ export default function StockDetail() {
               </div>
             </div>
             {extendedPrice && extendedPrice.price != null && (
-              <div className="flex items-center gap-3 mt-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground bg-muted px-2 py-0.5 rounded border border-border">
-                  {extendedPrice.label}
-                </span>
-                <span className="font-mono text-lg font-medium text-foreground">
-                  {formatCurrency(extendedPrice.price, quote.currency || "USD")}
-                </span>
-                {extendedPrice.change != null && (
-                  <span className={cn(
-                    "font-mono text-sm font-medium",
-                    (extendedPrice.change ?? 0) >= 0 ? "text-[#00C853]" : "text-[#FF333A]"
-                  )}>
-                    {extendedPrice.change > 0 ? "+" : ""}{extendedPrice.change.toFixed(2)}
-                    {extendedPrice.pct != null && (
-                      <span className="ml-1">({formatPercent(extendedPrice.pct)})</span>
-                    )}
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground bg-muted px-2 py-0.5 rounded border border-border">
+                    {extendedPrice.label}
                   </span>
+                  <span className="font-mono text-lg font-medium text-foreground">
+                    {formatCurrency(extendedPrice.price, quote.currency || "USD")}
+                  </span>
+                  {extendedPrice.change != null && (
+                    <span className={cn(
+                      "font-mono text-sm font-medium",
+                      (extendedPrice.change ?? 0) >= 0 ? "text-[#00C853]" : "text-[#FF333A]"
+                    )}>
+                      {extendedPrice.change > 0 ? "+" : ""}{extendedPrice.change.toFixed(2)}
+                      {extendedPrice.pct != null && (
+                        <span className="ml-1">({formatPercent(extendedPrice.pct)})</span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                {extendedPrice.asOf && (
+                  <p className="text-xs text-muted-foreground pl-0.5">
+                    As of {extendedPrice.asOf} · Updates every second
+                  </p>
                 )}
               </div>
             )}

@@ -342,6 +342,12 @@ components:
           type: ["number", "null"]
         preMarketChangePercent:
           type: ["number", "null"]
+        preMarketTime:
+          type: ["string", "null"]
+          description: ISO 8601 timestamp of the last pre-market price update
+        postMarketTime:
+          type: ["string", "null"]
+          description: ISO 8601 timestamp of the last post-market price update
       required:
         - symbol
         - name

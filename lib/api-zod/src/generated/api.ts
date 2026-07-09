@@ -66,7 +66,9 @@ export const GetQuoteResponse = zod.object({
   "postMarketChangePercent": zod.number().nullish(),
   "preMarketPrice": zod.number().nullish(),
   "preMarketChange": zod.number().nullish(),
-  "preMarketChangePercent": zod.number().nullish()
+  "preMarketChangePercent": zod.number().nullish(),
+  "preMarketTime": zod.string().nullish().describe('ISO 8601 timestamp of the last pre-market price update'),
+  "postMarketTime": zod.string().nullish().describe('ISO 8601 timestamp of the last post-market price update')
 })
 
 

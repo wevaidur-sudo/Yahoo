@@ -55,4 +55,14 @@ export interface StockQuote {
   preMarketChange?: number | null;
   /** @nullable */
   preMarketChangePercent?: number | null;
+  /**
+     * ISO 8601 timestamp of the last pre-market price update
+     * @nullable
+     */
+  preMarketTime?: string | null;
+  /**
+     * ISO 8601 timestamp of the last post-market price update
+     * @nullable
+     */
+  postMarketTime?: string | null;
 }

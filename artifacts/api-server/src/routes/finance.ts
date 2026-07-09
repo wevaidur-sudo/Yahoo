@@ -69,13 +69,121 @@ router.get("/finance/quote/:symbol", async (req, res): Promise<void> => {
   const { symbol } = params.data;
 
   try {
+    const now = new Date();
+    // Fetch quote (metadata) and chart (real-time candles) in parallel.
+    // chart() uses Yahoo's v8 endpoint which is not served from the same
+    // CDN cache as v7/quote — this is how we get live extended-hours prices.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const q: any = await (yahooFinance as any).quote(symbol);
+    const [q, chartResult]: [any, any] = await Promise.all([
+      (yahooFinance as any).quote(symbol),
+      (yahooFinance as any).chart(symbol, {
+        period1: new Date(now.getTime() - 12 * 60 * 60 * 1000), // last 12 h covers any session
+        period2: now,
+        interval: "1m",
+        // includePrePost is true by default in yahoo-finance2
+      }, {
+        fetchOptions: {
+          headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+        },
+      }),
+    ]);
 
     if (!q) {
       res.status(404).json({ error: `Symbol not found: ${symbol}` });
       return;
     }
+
+    // ── Derive real-time extended-hours price from chart candles ────────────
+    // The chart quotes array contains 1-minute candles for pre + regular + post
+    // market.  We walk backwards to find the latest non-null close, then check
+    // whether it falls inside today's pre- or post-market session window.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const chartQuotes: any[] = chartResult?.quotes ?? [];
+    const meta = chartResult?.meta ?? {};
+
+    // Today's pre-market session window (Date objects from yahoo-finance2)
+    const preStart: Date | null = meta?.currentTradingPeriod?.pre?.start ?? null;
+    const preEnd: Date | null   = meta?.currentTradingPeriod?.pre?.end   ?? null;
+
+    // Timestamp of the last regular-market trade — anything AFTER this is extended hours.
+    // This works across session boundaries: yesterday's post-market candles are after
+    // yesterday's regularMarketTime; today's pre-market candles are also after it.
+    const regularMarketTime: Date | null = meta?.regularMarketTime instanceof Date
+      ? meta.regularMarketTime
+      : (meta?.regularMarketTime ? new Date(meta.regularMarketTime) : null);
+
+    // Last candle with a valid close
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let lastCandle: any = null;
+    for (let i = chartQuotes.length - 1; i >= 0; i--) {
+      if (chartQuotes[i]?.close != null) { lastCandle = chartQuotes[i]; break; }
+    }
+
+    // Helper: is a Date within [start, end)?
+    const inWindow = (d: Date, s: Date | null, e: Date | null) =>
+      !!(s && e && d >= s && d < e);
+
+    let preMarketPrice: number | null = null;
+    let preMarketChange: number | null = null;
+    let preMarketChangePercent: number | null = null;
+    let preMarketTime: string | null = null;
+    let postMarketPrice: number | null = null;
+    let postMarketChange: number | null = null;
+    let postMarketChangePercent: number | null = null;
+    let postMarketTime: string | null = null;
+
+    // Use the chart's regularMarketPrice as the base for change calculations
+    // (it equals the most recent regular-session close price)
+    const regularClose: number = meta?.regularMarketPrice ?? q.regularMarketPrice ?? 0;
+
+    if (lastCandle) {
+      const candleDate: Date = lastCandle.date instanceof Date
+        ? lastCandle.date
+        : new Date(lastCandle.date);
+      const close: number = Math.round(lastCandle.close * 10000) / 10000;
+      const change = Math.round((close - regularClose) * 10000) / 10000;
+      const changePct = regularClose !== 0
+        ? Math.round(((change / regularClose) * 100) * 10000) / 10000
+        : 0;
+      const iso = candleDate.toISOString();
+
+      // Is this candle from an extended-hours session?
+      // It qualifies if it's after the last regular-market close.
+      const isExtended = regularMarketTime ? candleDate > regularMarketTime : false;
+
+      if (isExtended) {
+        if (inWindow(candleDate, preStart, preEnd)) {
+          // Candle falls in today's pre-market window
+          preMarketPrice = close;
+          preMarketChange = change;
+          preMarketChangePercent = changePct;
+          preMarketTime = iso;
+        } else {
+          // After regular close but not in pre-market → post-market
+          // (covers both yesterday's post-market and today's post-market)
+          postMarketPrice = close;
+          postMarketChange = change;
+          postMarketChangePercent = changePct;
+          postMarketTime = iso;
+        }
+      }
+    }
+
+    // Fall back to quote() extended values only if chart gave us nothing
+    // (e.g. weekend, holiday, or very new symbol with no intraday data)
+    if (preMarketPrice == null && q.preMarketPrice != null) {
+      preMarketPrice = q.preMarketPrice;
+      preMarketChange = q.preMarketChange ?? null;
+      preMarketChangePercent = q.preMarketChangePercent ?? null;
+      preMarketTime = q.preMarketTime instanceof Date ? q.preMarketTime.toISOString() : null;
+    }
+    if (postMarketPrice == null && q.postMarketPrice != null) {
+      postMarketPrice = q.postMarketPrice;
+      postMarketChange = q.postMarketChange ?? null;
+      postMarketChangePercent = q.postMarketChangePercent ?? null;
+      postMarketTime = q.postMarketTime instanceof Date ? q.postMarketTime.toISOString() : null;
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     const data = {
       symbol: q.symbol,
@@ -97,14 +205,14 @@ router.get("/finance/quote/:symbol", async (req, res): Promise<void> => {
       currency: q.currency ?? null,
       exchange: q.fullExchangeName ?? q.exchange ?? null,
       marketState: q.marketState ?? null,
-      postMarketPrice: q.postMarketPrice ?? null,
-      postMarketChange: q.postMarketChange ?? null,
-      postMarketChangePercent: q.postMarketChangePercent ?? null,
-      postMarketTime: q.postMarketTime instanceof Date ? q.postMarketTime.toISOString() : null,
-      preMarketPrice: q.preMarketPrice ?? null,
-      preMarketChange: q.preMarketChange ?? null,
-      preMarketChangePercent: q.preMarketChangePercent ?? null,
-      preMarketTime: q.preMarketTime instanceof Date ? q.preMarketTime.toISOString() : null,
+      postMarketPrice,
+      postMarketChange,
+      postMarketChangePercent,
+      postMarketTime,
+      preMarketPrice,
+      preMarketChange,
+      preMarketChangePercent,
+      preMarketTime,
     };
 
     res.json(GetQuoteResponse.parse(data));

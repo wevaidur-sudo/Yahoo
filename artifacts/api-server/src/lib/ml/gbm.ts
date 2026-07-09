@@ -165,8 +165,13 @@ export class GradientBoostedTrees {
     this.config = { ...DEFAULT_GBM_CONFIG, ...config };
   }
 
-  /** Trains on features X (rows x cols) against binary labels y (0/1). */
-  fit(X: number[][], y: number[]): void {
+  /**
+   * Trains on features X (rows x cols) against binary labels y (0/1).
+   * Async so the event loop can handle HTTP requests between tree builds —
+   * each tree yields via setImmediate before the next one starts, preventing
+   * the ~120-iteration CPU loop from blocking all incoming requests.
+   */
+  async fit(X: number[][], y: number[]): Promise<void> {
     const n = X.length;
     const nFeatures = X[0]?.length ?? 0;
     const rand = mulberry32(this.config.seed);
@@ -184,7 +189,14 @@ export class GradientBoostedTrees {
       Math.round(n * this.config.rowSubsample),
     );
 
+    // Yield helper: hands control back to the event loop so pending I/O and
+    // HTTP requests are processed before the next tree is built.
+    const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+
     for (let t = 0; t < this.config.nTrees; t++) {
+      // Yield every tree so HTTP requests aren't starved during training.
+      await yieldToEventLoop();
+
       const p = rawPred.map(sigmoid);
       const grad = p.map((pi, i) => pi - y[i]); // dLoss/dRaw for log loss
       const hess = p.map((pi) => Math.max(pi * (1 - pi), 1e-6));

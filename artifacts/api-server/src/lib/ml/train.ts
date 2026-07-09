@@ -67,7 +67,7 @@ export async function trainAllModels(
 
     log(`[train] Training "${kind}" model on ${group.length} features…`);
     const model = new GradientBoostedTrees();
-    model.fit(XTrain, yTrain);
+    await model.fit(XTrain, yTrain);
 
     const { accuracy, winRate, baseRate } = evaluate(model, XTest, yTest);
     log(`[train] "${kind}" holdout accuracy=${accuracy.toFixed(1)}% winRate=${winRate.toFixed(1)}% baseRate=${baseRate.toFixed(1)}%`);

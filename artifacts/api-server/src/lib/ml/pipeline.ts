@@ -2,6 +2,12 @@
  * Offline data pipeline: pull multi-year daily OHLCV for the training
  * universe from Yahoo Finance, persist it, then build a point-in-time
  * feature/label training set from the stored history.
+ *
+ * Labels are RISK-ADJUSTED: a row is labelled 1 if the stock's forward
+ * return over PREDICTION_HORIZON_DAYS exceeds SPY's return over the same
+ * window by more than OUTPERFORM_THRESHOLD. This removes the market-
+ * direction component so the model learns genuine stock-picking signal
+ * rather than a proxy for "did the whole market go up?".
  */
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import YahooFinance from "yahoo-finance2";
@@ -14,7 +20,13 @@ import {
   type Bar,
   type FundamentalSnapshot,
 } from "./features";
-import { TRAINING_UNIVERSE, HISTORY_YEARS, PREDICTION_HORIZON_DAYS, OUTPERFORM_THRESHOLD } from "./universe";
+import {
+  TRAINING_UNIVERSE,
+  SPY_BENCHMARK,
+  HISTORY_YEARS,
+  PREDICTION_HORIZON_DAYS,
+  OUTPERFORM_THRESHOLD,
+} from "./universe";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const yahooFinance = new (YahooFinance as any)({ suppressNotices: ["yahooSurvey"] });
@@ -23,7 +35,10 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Fetches and upserts multi-year daily history for every symbol in the universe. */
+/**
+ * Fetches and upserts multi-year daily history for every symbol in the
+ * universe PLUS the SPY benchmark (always needed for risk-adjusted labels).
+ */
 export async function fetchAndStoreHistory(
   symbols: string[] = TRAINING_UNIVERSE,
   years: number = HISTORY_YEARS,
@@ -32,7 +47,12 @@ export async function fetchAndStoreHistory(
   const now = new Date();
   const start = new Date(now.getTime() - years * 365 * 24 * 60 * 60 * 1000);
 
-  for (const symbol of symbols) {
+  // Always include SPY so risk-adjusted labels can be computed.
+  const allSymbols = symbols.includes(SPY_BENCHMARK)
+    ? symbols
+    : [SPY_BENCHMARK, ...symbols];
+
+  for (const symbol of allSymbols) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const chart = (await (yahooFinance as any).chart(symbol, {
@@ -71,7 +91,7 @@ export async function fetchAndStoreHistory(
   }
 }
 
-/** Fetches fundamentals for every symbol and upserts them into the cache table (chunked-safe: call per-symbol-subset). */
+/** Fetches fundamentals for every symbol and upserts them into the cache table. */
 export async function fetchAndCacheFundamentals(
   symbols: string[] = TRAINING_UNIVERSE,
   log: (msg: string) => void = console.log,
@@ -122,20 +142,50 @@ export interface TrainingRow {
 }
 
 /**
- * Builds point-in-time training rows from stored history. Fundamentals are
- * fetched once per symbol (current snapshot) and reused across that symbol's
- * historical rows — historical point-in-time fundamentals aren't available
- * from this free data source, so this is a known, documented approximation
- * for the Value feature group only (Momentum/Low-Risk features are fully
- * point-in-time correct since they derive purely from price history).
+ * Builds point-in-time training rows from stored history using RISK-ADJUSTED
+ * labels: label=1 iff stockReturn − spyReturn > OUTPERFORM_THRESHOLD over
+ * the prediction horizon.
+ *
+ * SPY must be present in the DB (fetchAndStoreHistory always stores it).
+ * Fundamentals are fetched once per symbol (current snapshot) and reused
+ * across historical rows — a known approximation for the Value feature group
+ * only; Momentum and Low-Risk features are fully point-in-time correct.
  */
 export async function buildTrainingSet(
   symbols: string[] = TRAINING_UNIVERSE,
   log: (msg: string) => void = console.log,
 ): Promise<TrainingRow[]> {
-  const rows: TrainingRow[] = [];
+  // ── Load SPY benchmark history into a date→close map ─────────────────────
+  const spyBars = (
+    await db
+      .select()
+      .from(historicalPricesTable)
+      .where(eq(historicalPricesTable.symbol, SPY_BENCHMARK))
+  ).sort((a, b) => a.date.localeCompare(b.date));
 
-  for (const symbol of symbols) {
+  if (spyBars.length < 250) {
+    throw new Error(
+      `SPY benchmark history missing or too short (${spyBars.length} bars). ` +
+      `Run fetchAndStoreHistory first — it always fetches SPY.`,
+    );
+  }
+
+  // Index by date for O(1) lookup
+  const spyCloseByDate = new Map<string, number>(
+    spyBars.map((b) => [b.date, b.close]),
+  );
+
+  // Build a sorted list of SPY dates/closes for horizon lookups
+  const spyDateList = spyBars.map((b) => b.date);
+
+  log(`[pipeline] Loaded ${spyBars.length} SPY bars for risk-adjusted labels`);
+
+  // ── Build training rows for each stock ────────────────────────────────────
+  const rows: TrainingRow[] = [];
+  // Filter out SPY itself from training symbols
+  const trainingSymbols = symbols.filter((s) => s !== SPY_BENCHMARK);
+
+  for (const symbol of trainingSymbols) {
     const bars = (
       await db.select().from(historicalPricesTable).where(eq(historicalPricesTable.symbol, symbol))
     )
@@ -165,17 +215,80 @@ export async function buildTrainingSet(
         }
       : EMPTY_FUNDAMENTALS;
 
+    let built = 0;
+    let skippedNoSpy = 0;
+
     for (let i = 200; i < bars.length - PREDICTION_HORIZON_DAYS; i++) {
       const features = computeFeaturesAt(bars, i, fundamentals);
       if (!features) continue;
-      const entryClose = bars[i].close;
-      const futureClose = bars[i + PREDICTION_HORIZON_DAYS].close;
-      const forwardReturn = futureClose / entryClose - 1;
-      const label: 0 | 1 = forwardReturn > OUTPERFORM_THRESHOLD ? 1 : 0;
-      rows.push({ symbol, date: bars[i].date, features, label });
+
+      const entryDate = bars[i].date;
+      const futureDate = bars[i + PREDICTION_HORIZON_DAYS].date;
+
+      // Find SPY's close on the same entry and future dates.
+      // SPY and the stock trade on the same calendar so dates almost always
+      // match; if not (holiday quirk), skip this row rather than mislabel it.
+      const spyEntry = spyCloseByDate.get(entryDate);
+      const spyFuture = spyCloseByDate.get(futureDate);
+      if (spyEntry == null || spyFuture == null) {
+        // Try the nearest available SPY date within ±2 days
+        const spyEntryResolved = spyEntry ?? resolveNearest(spyCloseByDate, spyDateList, entryDate, 2);
+        const spyFutureResolved = spyFuture ?? resolveNearest(spyCloseByDate, spyDateList, futureDate, 2);
+        if (spyEntryResolved == null || spyFutureResolved == null) {
+          skippedNoSpy++;
+          continue;
+        }
+        const stockReturn = bars[i + PREDICTION_HORIZON_DAYS].close / bars[i].close - 1;
+        const spyReturn = spyFutureResolved / spyEntryResolved - 1;
+        const label: 0 | 1 = stockReturn - spyReturn > OUTPERFORM_THRESHOLD ? 1 : 0;
+        rows.push({ symbol, date: entryDate, features, label });
+        built++;
+        continue;
+      }
+
+      const stockReturn = bars[i + PREDICTION_HORIZON_DAYS].close / bars[i].close - 1;
+      const spyReturn = spyFuture / spyEntry - 1;
+      const label: 0 | 1 = stockReturn - spyReturn > OUTPERFORM_THRESHOLD ? 1 : 0;
+      rows.push({ symbol, date: entryDate, features, label });
+      built++;
     }
-    log(`[pipeline] ${symbol}: built ${bars.length - 200 - PREDICTION_HORIZON_DAYS} training rows`);
+
+    log(
+      `[pipeline] ${symbol}: built ${built} training rows` +
+        (skippedNoSpy > 0 ? ` (${skippedNoSpy} skipped — no SPY date match)` : ""),
+    );
   }
 
   return rows;
+}
+
+/**
+ * Resolves the closest SPY close price on or before `targetDate` within
+ * `maxDays` previous trading days. Never returns a future date's price —
+ * using a forward date as benchmark substitute would introduce look-ahead bias.
+ */
+function resolveNearest(
+  closeByDate: Map<string, number>,
+  sortedDates: string[],
+  targetDate: string,
+  maxDays: number,
+): number | null {
+  // Binary-search: lo = first index where sortedDates[lo] >= targetDate
+  let lo = 0, hi = sortedDates.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sortedDates[mid] < targetDate) lo = mid + 1;
+    else hi = mid;
+  }
+  // Check exact match first
+  if (lo < sortedDates.length && sortedDates[lo] === targetDate) {
+    const v = closeByDate.get(sortedDates[lo]);
+    if (v != null) return v;
+  }
+  // Walk backward only — no future dates to avoid look-ahead bias
+  for (let i = lo - 1; i >= 0 && lo - 1 - i < maxDays; i--) {
+    const v = closeByDate.get(sortedDates[i]);
+    if (v != null) return v;
+  }
+  return null;
 }

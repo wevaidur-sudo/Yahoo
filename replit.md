@@ -1,84 +1,58 @@
 # FinanceScope
 
-A market intelligence platform for real-time stock, crypto, ETF, and futures data. Features a machine-learning pipeline for market analysis and AI-driven stock analysis via Google Gemini.
+A full-stack market intelligence platform that scrapes, analyzes, and visualizes Yahoo Finance data with AI-powered insights and backtesting capabilities.
+
+## Architecture
+
+This is a pnpm monorepo with two main artifacts and shared libraries:
+
+- **`artifacts/yahoo-finance-scraper/`** — React + Vite frontend (preview path: `/`)
+- **`artifacts/api-server/`** — Express API server (preview path: `/api`, port: `$PORT`)
+- **`lib/db/`** — Drizzle ORM schema + PostgreSQL client
+- **`lib/api-spec/`** — OpenAPI YAML specification
+- **`lib/api-zod/`** — Zod schemas generated from the OpenAPI spec
+- **`lib/api-client-react/`** — TanStack Query hooks generated via orval
 
 ## Stack
 
-- **Frontend:** React 19, Vite, Tailwind CSS 4, Radix UI, Wouter (routing), React Query
-- **Backend:** Node.js 24, Express 5, Drizzle ORM, PostgreSQL
-- **Data:** yahoo-finance2 (primary), Tiingo API (fallback for delisted tickers)
-- **AI:** Google Gemini SDK for qualitative analysis overlay
-- **ML:** Custom GBM pipeline for signal scoring
-- **Monorepo:** pnpm workspaces
+- **Frontend**: React, Vite, Tailwind CSS, Radix UI, TanStack Query, Recharts, Wouter
+- **Backend**: Express (Node.js), ESBuild bundler
+- **Database**: PostgreSQL via Drizzle ORM
+- **Data**: `yahoo-finance2` for market data, Playwright for scraping
+- **AI**: Google Gemini (`@google/generative-ai`) for qualitative analysis
 
-## Project Structure
+## How to Run
 
-```
-artifacts/
-  api-server/          # Express backend + ML training scripts
-  yahoo-finance-scraper/ # React frontend
-  mockup-sandbox/      # UI component dev environment
-lib/
-  db/                  # Drizzle ORM schema + config
-  api-spec/            # OpenAPI spec (source of truth for codegen)
-  api-zod/             # Generated Zod schemas + React Query hooks
-  ml/                  # ML feature generation and scoring
-```
+Both workflows start automatically:
 
-## Running the App
-
-Three workflows are configured and start automatically:
-
-| Workflow | Command |
-|----------|---------|
-| API Server | `pnpm --filter @workspace/api-server run dev` |
-| Frontend | `pnpm --filter @workspace/yahoo-finance-scraper run dev` |
-| Mockup Sandbox | `pnpm --filter @workspace/mockup-sandbox run dev` |
+- **API Server**: `pnpm --filter @workspace/api-server run dev`
+- **Frontend**: `pnpm --filter @workspace/yahoo-finance-scraper run dev`
 
 ## Database
 
-Uses Replit's built-in PostgreSQL (`DATABASE_URL` is auto-injected). To push schema changes:
+Schema is managed with Drizzle Kit. To push schema changes to the development DB:
 
 ```bash
-pnpm --filter @workspace/db push
+pnpm --filter @workspace/db run push
 ```
-
-The schema includes an `ohlcv_bars` table that caches OHLCV bars fetched during backtests. Run the above push command once after provisioning the database so the cache is available.
-
-## Backtesting
-
-```bash
-pnpm --filter @workspace/api-server run backtest
-```
-
-Data sources tried in order for intraday (5m) bars:
-1. **DB cache** (`ohlcv_bars`) — zero network cost, populated on first run
-2. **EODHD** — ~1 year of 5m history (`EODHD_API_KEY`, defaults to `"demo"`)
-3. **Yahoo Finance** — ~60 days of 5m, fallback
-
-For daily (1d) bars: DB cache → EODHD → Yahoo Finance.
 
 ## Required Secrets
 
 | Secret | Purpose |
 |--------|---------|
-| `GEMINI_API_KEY` | AI-powered qualitative analysis |
 | `SESSION_SECRET` | Express session signing |
+| `GEMINI_API_KEY` | Google Gemini AI analysis |
 
-## Type Codegen
+## Environment Variables
 
-After changing the OpenAPI spec (`lib/api-spec`), regenerate types:
+| Variable | Purpose |
+|----------|---------|
+| `EODHD_API_KEY` | EOD Historical Data API (set to `demo` by default) |
+| `DATABASE_URL` | Auto-provisioned by Replit |
 
-```bash
-pnpm --filter @workspace/api-spec run codegen
-```
+## Notes
 
-## ML Training
-
-```bash
-pnpm --filter @workspace/api-server run train-ml
-```
+- `yahoo-finance2` emits a warning about requiring Node ≥ 22 (current env is Node 20) — this is cosmetic; core features work.
+- The API server builds to `dist/index.mjs` via ESBuild before starting.
 
 ## User Preferences
-
-- Keep existing project structure and stack — do not restructure or migrate.

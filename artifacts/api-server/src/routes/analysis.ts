@@ -538,35 +538,77 @@ router.post("/finance/options-strategy/:symbol", async (req, res): Promise<void>
     const { macd, histogram } = calcMACD(closes);
     const atr  = calcATR(highs, lows, closes);
 
+    // ── DTE constants (same thresholds as top-pick flow) ────────────────────
+    const MIN_DTE_STANDALONE   = 7;   // hard floor — never 0DTE or same-week
+    const IDEAL_DTE_STANDALONE = 21;  // professional minimum for directional plays
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let allChains: any[] = [];
     if (optionsData.status === "fulfilled" && optionsData.value?.options?.length) {
-      allChains = optionsData.value.options.slice(0, 3);
+      const rawChains: any[] = optionsData.value.options;
+      const calcDTE = (chain: any) =>
+        Math.ceil((new Date(chain.expirationDate).getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+      const validChains = rawChains.filter((chain: any) => calcDTE(chain) >= MIN_DTE_STANDALONE);
+      const idealChains = validChains.filter((chain: any) => calcDTE(chain) >= IDEAL_DTE_STANDALONE);
+      allChains = (idealChains.length ? idealChains : validChains).slice(0, 3);
     }
 
     const chainSummary = allChains.map((chain: any) => {
-      const expDate = new Date(chain.expirationDate).toDateString();
-      const calls: any[] = (chain.calls || []).filter((c: any) => c.volume > 0).sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 5);
-      const puts:  any[] = (chain.puts  || []).filter((p: any) => p.volume > 0).sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 5);
-      return `Expiry: ${expDate}
-  Calls: ${calls.map((c: any) => `$${c.strike} IV=${c.impliedVolatility ? (c.impliedVolatility * 100).toFixed(0) : "?"}% OI=${c.openInterest} vol=${c.volume}`).join(" | ")}
-  Puts:  ${puts.map((p: any) => `$${p.strike} IV=${p.impliedVolatility ? (p.impliedVolatility * 100).toFixed(0) : "?"}% OI=${p.openInterest} vol=${p.volume}`).join(" | ")}`;
+      const expiryDate = new Date(chain.expirationDate);
+      const expDate    = expiryDate.toDateString();
+      const dte        = Math.round((expiryDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+
+      // Show near-ATM contracts (strikes within ±15% of spot) sorted by OI.
+      const nearATMCall = (c: any) => c.volume > 0 && c.strike >= currentPrice * 0.85 && c.strike <= currentPrice * 1.15;
+      const nearATMPut  = (p: any) => p.volume > 0 && p.strike >= currentPrice * 0.85 && p.strike <= currentPrice * 1.15;
+
+      const callPool: any[] = (chain.calls || []).filter(nearATMCall)
+        .sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 7);
+      const putPool: any[]  = (chain.puts  || []).filter(nearATMPut)
+        .sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 7);
+
+      // Fallback: if no near-ATM contracts found, use most liquid overall
+      const callList = callPool.length
+        ? callPool
+        : (chain.calls || []).filter((c: any) => c.volume > 0)
+            .sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 5);
+      const putList = putPool.length
+        ? putPool
+        : (chain.puts  || []).filter((p: any) => p.volume > 0)
+            .sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 5);
+
+      return `Expiry: ${expDate} (${dte} DTE)
+  Calls: ${callList.map((c: any) => `${c.strike} IV=${c.impliedVolatility ? (c.impliedVolatility * 100).toFixed(0) : "?"}% OI=${c.openInterest} vol=${c.volume} last=${c.lastPrice?.toFixed(2)}`).join(" | ")}
+  Puts:  ${putList.map((p: any) => `${p.strike} IV=${p.impliedVolatility ? (p.impliedVolatility * 100).toFixed(0) : "?"}% OI=${p.openInterest} vol=${p.volume} last=${p.lastPrice?.toFixed(2)}`).join(" | ")}`;
     });
 
-    const prompt = `You are an elite options strategist. Design the best options strategy for a trader deploying capital in ${symbol}. Choose the structure — which strikes, expiries, and legs to use. Premiums, max profit/loss, and probability will be computed from live market data afterward.
+    const prompt = `You are a professional options strategist. Design the best options strategy for a ${investmentAmount.toLocaleString()} maximum budget on ${symbol} (currently ${currentPrice.toFixed(2)}).
 
 STOCK DATA:
-Symbol: ${symbol}  |  Price: $${currentPrice.toFixed(2)}
+Symbol: ${symbol}  |  Price: ${currentPrice.toFixed(2)}
 Change: ${q.regularMarketChange?.toFixed(2) ?? "0"} (${q.regularMarketChangePercent?.toFixed(2) ?? "0"}%)
 RSI(14-day): ${rsi?.toFixed(1) ?? "N/A"}  |  MACD histogram: ${histogram?.toFixed(3) ?? "N/A"}
-ATR(14-day): $${atr?.toFixed(2) ?? "N/A"}
+ATR(14-day): ${atr?.toFixed(2) ?? "N/A"}
 
-AVAILABLE OPTIONS CHAINS (choose strikes/expiries ONLY from these):
+AVAILABLE OPTIONS CHAINS (only expirations with ≥${MIN_DTE_STANDALONE} DTE — 0DTE and near-term expiries excluded):
 ${chainSummary.length ? chainSummary.join("\n\n") : "No options data available"}
 
-TRADER CAPITAL: $${investmentAmount.toLocaleString()}
+PROFESSIONAL SELECTION RULES — ALL must be satisfied:
 
-Choose ONE strategy from: Long Call, Long Put, Bull Call Spread, Bear Put Spread, Iron Condor, Straddle, Strangle, Covered Call, Cash-Secured Put, Butterfly Spread. Prefer defined-risk strategies unless capital > $10,000.
+1. MINIMUM DTE: Use an expiration with ≥${IDEAL_DTE_STANDALONE} DTE. Never use same-week or 0DTE options.
+
+2. STRIKE QUALITY: Target ATM or 1-2 strikes OTM (delta ~0.35–0.50). Deep OTM penny contracts (<$0.10 premium) have near-zero probability of profit and are forbidden.
+
+3. PROBABILITY OF PROFIT: Target ≥ 35% PoP. If a quality single-leg costs more than ${investmentAmount.toLocaleString()}, switch to a vertical spread — buy the near-ATM strike, sell a strike further OTM — to reduce cost while keeping meaningful PoP.
+
+4. BUDGET: Total net debit × 100 × contracts ≤ ${investmentAmount.toLocaleString()}.
+
+5. LIQUIDITY: Only use contracts with OI > 50 and volume > 10.
+
+DECISION LOGIC:
+- Can a near-ATM single leg (delta ≥ 0.30, ATM premium ≤ ${(investmentAmount / 100).toFixed(2)}) be found? → Use it.
+- Otherwise → vertical spread: buy near-ATM strike, sell further OTM strike, net debit ≤ ${(investmentAmount / 100).toFixed(2)}.
+- Never choose a contract purely because it is cheap.
 
 Return ONLY valid JSON (no markdown):
 {
@@ -582,9 +624,9 @@ Return ONLY valid JSON (no markdown):
     }
   ],
   "riskLevel": "low" | "medium" | "high",
-  "reasoning": "<3-4 sentences: why this strategy, these strikes/expiry, what's the catalyst>",
+  "reasoning": "<2-3 sentences: why this strike, expiry, and structure are appropriate>",
   "entryTiming": "<specific entry conditions and timing>",
-  "exitStrategy": "<take profit, stop loss, and time decay management>"
+  "exitStrategy": "<take profit at 75-100% gain, cut at 40-50% loss>"
 }`;
 
     const genAI = getGemini();
@@ -610,11 +652,27 @@ Return ONLY valid JSON (no markdown):
       return;
     }
 
+    // Guard: if no qualifying chains exist, fail fast before paying for an AI call
+    if (!allChains.length) {
+      res.status(422).json({
+        error: `No options chains with ≥${MIN_DTE_STANDALONE} days to expiry found for ${symbol}. This symbol may have illiquid options or only same-day expiries available right now. Try a different symbol.`,
+      });
+      return;
+    }
+
     const aiLegs: any[] = Array.isArray(aiOutput.legs) ? aiOutput.legs : [];
     if (!aiLegs.length) {
       res.status(500).json({ error: "AI did not return a valid strategy structure" });
       return;
     }
+
+    // ── Strike distance guard ────────────────────────────────────────────────
+    // How far from ATM we allow a resolved strike to be (as a fraction of spot).
+    // This prevents the AI from accidentally picking a contract the AI was shown
+    // but that is clearly not near the money (e.g., $8 strike on a $150 stock).
+    const MAX_STRIKE_DISTANCE_FRAC = 0.25;  // 25% from spot
+    const MIN_OI_FLOOR = 10;                // at least some open interest
+    const MIN_VOL_FLOOR = 1;                // at least some volume
 
     // Resolve each leg to a real contract from the fetched chain
     const usedContracts: Array<{ label: string; volume?: number | null; openInterest?: number | null; bid?: number | null; ask?: number | null }> = [];
@@ -630,10 +688,26 @@ Return ONLY valid JSON (no markdown):
       }
       const chain  = allChains.find((c: any) => new Date(c.expirationDate).toDateString() === leg.expiry) ?? allChains[0];
       if (!chain) continue;
-      const pool: any[] = leg.type === "put" ? chain.puts || [] : chain.calls || [];
-      if (!pool.length) continue;
-      const targetStrike = typeof leg.strike === "number" ? leg.strike : pool[0].strike;
-      const contract     = pool.reduce((best: any, c: any) => Math.abs(c.strike - targetStrike) < Math.abs(best.strike - targetStrike) ? c : best, pool[0]);
+
+      // Build candidate pool — enforce minimum liquidity server-side
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rawPool: any[] = leg.type === "put" ? chain.puts || [] : chain.calls || [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pool: any[] = rawPool.filter((c: any) =>
+        (c.openInterest ?? 0) >= MIN_OI_FLOOR &&
+        (c.volume ?? 0) >= MIN_VOL_FLOOR &&
+        Math.abs(c.strike - currentPrice) / currentPrice <= MAX_STRIKE_DISTANCE_FRAC
+      );
+      // Fallback: if no near-ATM liquid contract, accept any contract within 35% of spot
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const effectivePool = pool.length ? pool : rawPool.filter((c: any) =>
+        Math.abs(c.strike - currentPrice) / currentPrice <= 0.35
+      );
+      if (!effectivePool.length) continue;
+
+      const targetStrike = typeof leg.strike === "number" ? leg.strike : effectivePool[0].strike;
+      const contract     = effectivePool.reduce((best: any, c: any) =>
+        Math.abs(c.strike - targetStrike) < Math.abs(best.strike - targetStrike) ? c : best, effectivePool[0]);
       const midPrice     = contract.bid > 0 && contract.ask > 0 ? (contract.bid + contract.ask) / 2 : contract.lastPrice;
       const expiryDate   = new Date(chain.expirationDate);
       if (!earliestExpiry || expiryDate < earliestExpiry) earliestExpiry = expiryDate;
@@ -641,7 +715,7 @@ Return ONLY valid JSON (no markdown):
       const iv = contract.impliedVolatility;
       if (iv > 0) ivSamples.push(iv);
       const bs = iv > 0 ? blackScholes({ spot: currentPrice, strike: contract.strike, timeToExpiryYears: T, riskFreeRate: r, volatility: iv, optionType: leg.type === "put" ? "put" : "call" }) : null;
-      usedContracts.push({ label: `${leg.type.toUpperCase()} $${contract.strike}`, volume: contract.volume, openInterest: contract.openInterest, bid: contract.bid, ask: contract.ask });
+      usedContracts.push({ label: `${leg.type.toUpperCase()} ${contract.strike}`, volume: contract.volume, openInterest: contract.openInterest, bid: contract.bid, ask: contract.ask });
       resolvedLegs.push({
         type: leg.type === "put" ? "put" : "call", action: leg.action === "sell" ? "sell" : "buy",
         strike: contract.strike, premium: midPrice != null ? +midPrice.toFixed(2) : 0,
@@ -700,6 +774,19 @@ Return ONLY valid JSON (no markdown):
     const formatMoney = (v: number | "unlimited") =>
       v === "unlimited" ? "Unlimited" : `$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}${v < 0 ? " (loss)" : ""}`;
 
+    // ── Professional PoP quality gate ────────────────────────────────────────
+    // Reject strategies the math confirms are near-worthless. 0DTE-induced
+    // "100%" readings and deep-OTM sub-25% readings are both caught here.
+    const MIN_POP_STANDALONE = 25;
+    const computedPoP = finalMetrics.probabilityOfProfit;
+    const popValid = typeof computedPoP === "number" && isFinite(computedPoP);
+    if (!popValid || computedPoP < MIN_POP_STANDALONE || computedPoP > 99) {
+      res.status(422).json({
+        error: `The computed probability of profit (${popValid ? computedPoP.toFixed(0) : "unknown"}%) does not meet the minimum quality threshold. This usually means the options chain contains stale or illiquid data. Try a different symbol or a larger budget to access higher-quality strikes.`,
+      });
+      return;
+    }
+
     res.json({
       symbol, investmentAmount,
       strategyName: aiOutput.strategyName ?? "Custom Strategy",
@@ -714,9 +801,9 @@ Return ONLY valid JSON (no markdown):
       totalCost: finalMetrics.netCost,
       maxProfit: formatMoney(finalMetrics.maxProfit),
       maxLoss:   formatMoney(finalMetrics.maxLoss),
-      breakeven:  finalMetrics.breakevens.length ? finalMetrics.breakevens.map((b) => `$${b.toFixed(2)}`).join(" / ") : "N/A",
+      breakeven:  finalMetrics.breakevens.length ? finalMetrics.breakevens.map((b) => `${b.toFixed(2)}`).join(" / ") : "N/A",
       breakevens: finalMetrics.breakevens,
-      probability: finalMetrics.probabilityOfProfit ?? 50,
+      probability: computedPoP,
       probabilityMethod: "Black-Scholes risk-neutral lognormal distribution using live implied volatility",
       riskLevel: aiOutput.riskLevel ?? "medium",
       reasoning: aiOutput.reasoning ?? "",

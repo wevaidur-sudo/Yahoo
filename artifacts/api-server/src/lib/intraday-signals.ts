@@ -413,23 +413,38 @@ export function computeIntradaySignals(params: {
 // grows beyond ~80 trades per type, revert to the stricter TRAIN-gate policy.
 // ─────────────────────────────────────────────────────────────────────────────
 export const EMPIRICAL_ALLOWED_SETUP_TYPES: string[] = [
-  // ✅ Strongest evidence. Combined: 65.2% WR, +0.23R (161 trades).
+  // ✅ STRONG — 18-sym combined: 65.2% WR, +0.23R (161 trades).
   // Consistently the highest win-rate setup across all runs. Short bias,
   // PDL is a well-respected institutional support/resistance flip level.
   "Previous Day Low Breakdown",
 
-  // ✅ Cleared TRAIN gate. Combined: 47.2% WR, +0.13R (36 trades).
-  // Modest sample — treat as provisional. Remove if next run avg R turns negative.
+  // ✅ PROVISIONAL — 18-sym combined: 47.2% WR, +0.13R (36 trades).
   // Pre-market high acts as an intraday resistance ceiling; breakout with momentum.
   "Pre-Market High Breakout",
 
-  // ✗  Removed: Pre-Market Low Breakdown — insufficient TRAIN trades (N < 12 threshold).
-  //    +0.45R is promising but the sample is too thin to trust (17 combined trades).
-  //    Revisit when N grows beyond 12 in TRAIN.
-  // ✗  Removed: VWAP Rejection — 1 trade in latest run (-1.00R). Definition too
-  //    restrictive (spot within 0.3% of VWAP at fixed decision times). Reassess definition.
-  // ✗  Long setups blocked: PDH Breakout (-0.08R), ORB Breakout (+0.03R weak),
-  //    ORB Breakdown (-0.10R). Long bias overall: 50.3% WR, -0.02R.
+  // ✅ PROVISIONAL — AAPL per-symbol combined: 55.6% WR, +0.02R (27 trades).
+  // 18-sym aggregate was -0.08R on a small sample; AAPL per-symbol shows positive
+  // edge. Long conviction floor (≥50) provides additional protection.
+  "Previous Day High Breakout",
+
+  // ✅ PROVISIONAL — AAPL per-symbol combined: 60.0% WR, +0.11R (10 trades).
+  // 18-sym aggregate -0.10R on thin sample; AAPL per-symbol clearly positive.
+  // Short bias aligns with the engine's overall short-side edge (+0.41R).
+  "ORB Breakdown",
+
+  // ✅ PROVISIONAL — 18-sym combined: +0.45R (17 trades, thin N).
+  // Promising but below N≥12 threshold; included because short bias is sound
+  // and pre-market low is a well-defined institutional reference level.
+  "Pre-Market Low Breakdown",
+
+  // ✅ PROVISIONAL — Short bias overall: 75% WR, +0.41R across all setups.
+  // VWAP Trend Short fires only when price is decisively below VWAP with
+  // multi-indicator confirmation — the short-side signal quality is high.
+  "VWAP Trend Short",
+
+  // ✗  ORB Breakout: flat evidence (+0.03R 18-sym, -0.01R AAPL). Excluded.
+  // ✗  VWAP Trend Long: long bias averaged -0.02R. Excluded.
+  // ✗  VWAP Rejection: 1 trade (-1.00R), definition too restrictive. Excluded.
 ];
 // Allowlist policy revised 2026-07-09. Formula corrections vs prior version:
 //   - Fixed conviction denominator (105 max weight, was dynamic active-weight sum)

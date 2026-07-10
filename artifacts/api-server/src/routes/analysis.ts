@@ -869,42 +869,87 @@ router.get("/finance/top-pick", async (req, res): Promise<void> => {
       const { histogram } = calcMACD(closes);
       const atr      = calcATR(highs, lows, closes);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // ── DTE constants ────────────────────────────────────────────────────────
+      const MIN_DTE   = 7;  // hard floor — never recommend anything expiring sooner
+      const IDEAL_DTE = 21; // professional minimum for directional plays
+
       let allChains: any[] = [];
       if (optionsData.status === "fulfilled" && optionsData.value?.options?.length) {
-        allChains = optionsData.value.options.slice(0, 3);
+        const rawChains: any[] = optionsData.value.options;
+        // Strip expirations that are too close to act on professionally
+        // Use ceiling so that an expiry timestamped e.g. 6.9 days away still
+        // counts as 7 DTE — market convention rounds to the nearest trading day.
+        const calcDTE = (chain: any) =>
+          Math.ceil((new Date(chain.expirationDate).getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+        const validChains = rawChains.filter((chain: any) => calcDTE(chain) >= MIN_DTE);
+        // Prefer 21+ DTE; fall back to MIN_DTE-qualified chains if nothing ideal exists
+        const idealChains = validChains.filter((chain: any) => calcDTE(chain) >= IDEAL_DTE);
+        allChains = (idealChains.length ? idealChains : validChains).slice(0, 3);
       }
 
+      const spot = winner.price;
+
       const chainSummary = allChains.map((chain: any) => {
-        const expDate = new Date(chain.expirationDate).toDateString();
-        const calls: any[] = (chain.calls || []).filter((c: any) => c.volume > 0 && (c.lastPrice ?? 0) <= 1.0).sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 5);
-        const puts:  any[] = (chain.puts  || []).filter((p: any) => p.volume > 0 && (p.lastPrice ?? 0) <= 1.0).sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 5);
-        const allCalls: any[] = (chain.calls || []).filter((c: any) => c.volume > 0).sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 5);
-        const allPuts:  any[] = (chain.puts  || []).filter((p: any) => p.volume > 0).sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 5);
-        const callList = calls.length ? calls : allCalls;
-        const putList  = puts.length  ? puts  : allPuts;
-        return `Expiry: ${expDate}
-  Calls (≤$1.00 pref): ${callList.map((c: any) => `${c.strike} IV=${c.impliedVolatility ? (c.impliedVolatility * 100).toFixed(0) : "?"}% OI=${c.openInterest} vol=${c.volume} last=${c.lastPrice?.toFixed(2)}`).join(" | ")}
-  Puts  (≤$1.00 pref): ${putList.map((p: any) => `${p.strike} IV=${p.impliedVolatility ? (p.impliedVolatility * 100).toFixed(0) : "?"}% OI=${p.openInterest} vol=${p.volume} last=${p.lastPrice?.toFixed(2)}`).join(" | ")}`;
+        const expiryDate = new Date(chain.expirationDate);
+        const expDate = expiryDate.toDateString();
+        const dte = Math.round((expiryDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+
+        // Show near-ATM contracts (strikes within ±15% of spot) sorted by open interest.
+        // No premium ceiling — we let the AI and budget math decide, not a filter.
+        const nearATMCall = (c: any) => c.volume > 0 && c.strike >= spot * 0.90 && c.strike <= spot * 1.15;
+        const nearATMPut  = (p: any) => p.volume > 0 && p.strike >= spot * 0.85 && p.strike <= spot * 1.10;
+
+        const callPool: any[] = (chain.calls || []).filter(nearATMCall)
+          .sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 7);
+        const putPool:  any[] = (chain.puts  || []).filter(nearATMPut)
+          .sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 7);
+
+        // Fallback: if no near-ATM contracts found, use most liquid overall
+        const callList = callPool.length
+          ? callPool
+          : (chain.calls || []).filter((c: any) => c.volume > 0)
+              .sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 5);
+        const putList = putPool.length
+          ? putPool
+          : (chain.puts || []).filter((p: any) => p.volume > 0)
+              .sort((a: any, b: any) => (b.openInterest || 0) - (a.openInterest || 0)).slice(0, 5);
+
+        return `Expiry: ${expDate} (${dte} DTE)
+  Calls: ${callList.map((c: any) => `${c.strike} IV=${c.impliedVolatility ? (c.impliedVolatility * 100).toFixed(0) : "?"}% OI=${c.openInterest} vol=${c.volume} last=${c.lastPrice?.toFixed(2)}`).join(" | ")}
+  Puts:  ${putList.map((p: any) => `${p.strike} IV=${p.impliedVolatility ? (p.impliedVolatility * 100).toFixed(0) : "?"}% OI=${p.openInterest} vol=${p.volume} last=${p.lastPrice?.toFixed(2)}`).join(" | ")}`;
       });
 
       const bias = winner.tradeSetup.bias;
-      const prompt = `You are an elite options strategist. Design the best options strategy for a trader with only ${BUDGET} to deploy in ${winner.symbol}.
+      const prompt = `You are a professional options strategist. Design the best options strategy for a ${BUDGET} maximum budget on ${winner.symbol} (currently ${spot.toFixed(2)}).
 
-STOCK DATA:
-Symbol: ${winner.symbol}  |  Price: ${winner.price.toFixed(2)}
-Intraday bias: ${bias.toUpperCase()} — setup: ${winner.tradeSetup.setupType} (${winner.signalScore.conviction}% conviction)
-RSI(14-day): ${rsi?.toFixed(1) ?? "N/A"}  |  MACD histogram: ${histogram?.toFixed(3) ?? "N/A"}
-ATR(14-day): ${atr?.toFixed(2) ?? "N/A"}
+TRADE CONTEXT:
+- Direction: ${bias.toUpperCase()} — ${winner.tradeSetup.setupType} (${winner.signalScore.conviction}% conviction)
+- Stop loss: ${winner.tradeSetup.stopLoss?.toFixed(2) ?? "N/A"} | Target 1: ${winner.tradeSetup.target1?.toFixed(2) ?? "N/A"} | Target 2: ${winner.tradeSetup.target2?.toFixed(2) ?? "N/A"}
+- RSI(14d): ${rsi?.toFixed(1) ?? "N/A"} | MACD histogram: ${histogram?.toFixed(3) ?? "N/A"} | ATR(14d): ${atr?.toFixed(2) ?? "N/A"}
 
-AVAILABLE OPTIONS CHAINS (prefer contracts with last price ≤ $1.00 so total cost stays under $100):
+AVAILABLE OPTIONS CHAINS (only expirations with ≥${MIN_DTE} DTE — 0DTE and near-term expiries excluded):
 ${chainSummary.length ? chainSummary.join("\n\n") : "No options data available"}
 
-CONSTRAINT: Total strategy cost MUST be ≤ ${BUDGET}. This means:
-- For single-leg: choose a strike where the premium × 100 ≤ ${BUDGET} (i.e. premium ≤ ${(BUDGET / 100).toFixed(2)})
-- For spreads: net debit × 100 ≤ ${BUDGET}
-- The intraday bias is ${bias.toUpperCase()}, so prefer ${bias === "short" ? "puts or bearish spreads" : "calls or bullish spreads"}.
+PROFESSIONAL SELECTION RULES — all must be satisfied:
 
-Choose ONE strategy: Long Call, Long Put, Bull Call Spread, Bear Put Spread. Prefer defined-risk, low-cost structures.
+1. MINIMUM DTE: Use an expiration with ≥${IDEAL_DTE} DTE. Never use same-week or 0DTE options — they expire worthless unless the move happens today, and there is no recovery from bad timing.
+
+2. STRIKE QUALITY: For single-leg longs, target ATM or 1-2 strikes OTM (delta ~0.35–0.50). Deep OTM cheap contracts have near-zero probability of profit and are speculative lottery tickets, not strategies.
+
+3. PROBABILITY OF PROFIT: Target ≥ 35% PoP. If a quality single-leg (delta ≥ 0.30) costs more than ${BUDGET}, switch to a vertical spread — it reduces cost while keeping a meaningful PoP.
+
+4. BUDGET: Total cost ≤ ${BUDGET}.
+   - Single-leg: premium × 100 ≤ ${BUDGET} (i.e. premium ≤ ${(BUDGET / 100).toFixed(2)})
+   - Spread: net debit × 100 ≤ ${BUDGET}
+
+5. LIQUIDITY: Prefer contracts with OI > 50 and volume > 10 to ensure fills are realistic.
+
+6. DIRECTION: ${bias === "short" ? "BEARISH → use Long Put or Bear Put Spread." : "BULLISH → use Long Call or Bull Call Spread."}
+
+DECISION LOGIC:
+- Can a near-ATM single leg (delta ≥ 0.30, premium ≤ ${(BUDGET / 100).toFixed(2)}) be found? → Use it.
+- Otherwise → use a vertical spread: buy the near-ATM strike, sell a strike further OTM, net debit ≤ ${(BUDGET / 100).toFixed(2)}.
+- Never choose a contract purely because it is cheap. If the only affordable contracts are deep OTM with < 20% PoP, say so in reasoning and use a spread instead.
 
 Return ONLY valid JSON (no markdown):
 {
@@ -914,8 +959,8 @@ Return ONLY valid JSON (no markdown):
     { "type": "call" | "put", "action": "buy" | "sell", "strike": <number>, "expiry": "<date string matching an available expiry>", "contractRatio": 1 }
   ],
   "riskLevel": "low" | "medium" | "high",
-  "reasoning": "<2-3 sentences: why this strategy fits the ${BUDGET} budget and the ${bias} setup>",
-  "exitStrategy": "<take profit at 50-100% gain, cut at 50% loss>"
+  "reasoning": "<2-3 sentences: why this strike, expiry, and structure are appropriate for this setup>",
+  "exitStrategy": "<take profit at 75-100% gain on the option position, cut at 40-50% loss>"
 }`;
 
       const genAI = getGemini();
@@ -969,28 +1014,41 @@ Return ONLY valid JSON (no markdown):
           });
 
           const netCostPerUnit = unitMetrics.netCost;
-          // If cost > budget, check if we can still present it (e.g. tight spread)
           const affordable = netCostPerUnit <= BUDGET;
+          const pop = unitMetrics.probabilityOfProfit;
 
-          optionsStrategy = {
-            strategyName:  aiOutput.strategyName ?? "Custom Strategy",
-            strategyType:  aiOutput.strategyType ?? "neutral",
-            riskLevel:     aiOutput.riskLevel ?? "medium",
-            reasoning:     aiOutput.reasoning ?? "",
-            exitStrategy:  aiOutput.exitStrategy ?? "",
-            affordable,
-            totalCost:     +netCostPerUnit.toFixed(2),
-            maxProfit:     unitMetrics.maxProfit === "unlimited" ? "Unlimited" : `${Math.abs(unitMetrics.maxProfit as number).toFixed(2)}`,
-            maxLoss:       unitMetrics.maxLoss   === "unlimited" ? "Unlimited" : `${Math.abs(unitMetrics.maxLoss   as number).toFixed(2)}`,
-            probability:   unitMetrics.probabilityOfProfit ?? 50,
-            breakeven:     unitMetrics.breakevens.map((b) => `${b.toFixed(2)}`).join(" / ") || "N/A",
-            legs: resolvedLegs.map((leg) => ({
-              type: leg.type, action: leg.action, strike: leg.strike ?? null,
-              expiry: (leg as any).expiryDate ? (leg as any).expiryDate.toDateString() : null,
-              premium: leg.premium ?? null,
-              impliedVolatility: (leg as any).impliedVolatility ?? null,
-            })),
-          };
+          // ── Professional quality gate ─────────────────────────────────────
+          // Reject strategies the math confirms are near-worthless. A PoP
+          // below 25% on a debit strategy is deep-OTM speculation regardless
+          // of how the AI described it.  Better to show nothing than to show
+          // a 0% PoP trade as an "AI-designed" recommendation.
+          // Treat null/unknown PoP as a failure — we need computable math
+          // to verify quality before surfacing a strategy.
+          const MIN_POP = 25;
+          const popIsValid = typeof pop === "number" && isFinite(pop);
+          if (!popIsValid || pop < MIN_POP) {
+            // Strategy failed the quality gate — do not surface it
+          } else {
+            optionsStrategy = {
+              strategyName:  aiOutput.strategyName ?? "Custom Strategy",
+              strategyType:  aiOutput.strategyType ?? "neutral",
+              riskLevel:     aiOutput.riskLevel ?? "medium",
+              reasoning:     aiOutput.reasoning ?? "",
+              exitStrategy:  aiOutput.exitStrategy ?? "",
+              affordable,
+              totalCost:     +netCostPerUnit.toFixed(2),
+              maxProfit:     unitMetrics.maxProfit === "unlimited" ? "Unlimited" : `${Math.abs(unitMetrics.maxProfit as number).toFixed(2)}`,
+              maxLoss:       unitMetrics.maxLoss   === "unlimited" ? "Unlimited" : `${Math.abs(unitMetrics.maxLoss   as number).toFixed(2)}`,
+              probability:   pop ?? 50,
+              breakeven:     unitMetrics.breakevens.map((b) => `${b.toFixed(2)}`).join(" / ") || "N/A",
+              legs: resolvedLegs.map((leg) => ({
+                type: leg.type, action: leg.action, strike: leg.strike ?? null,
+                expiry: (leg as any).expiryDate ? (leg as any).expiryDate.toDateString() : null,
+                premium: leg.premium ?? null,
+                impliedVolatility: (leg as any).impliedVolatility ?? null,
+              })),
+            };
+          }
         }
       }
     } catch (optErr) {

@@ -59826,24 +59826,7 @@ async function fetchBars(symbol2, interval2, from, to, opts = {}) {
 
 // src/scripts/backtest.ts
 var SYMBOLS = [
-  "AAPL",
-  "MSFT",
-  "NVDA",
-  "AMZN",
-  "TSLA",
-  "META",
-  "GOOGL",
-  "SPY",
-  "QQQ",
-  "AMD",
-  "NFLX",
-  "JPM",
-  "XOM",
-  "UNH",
-  "COST",
-  "AVGO",
-  "CRM",
-  "ORCL"
+  "MSTR"
 ];
 var TRAIN_FRACTION = 0.65;
 var DECISION_TIMES_ET = [10.25, 11, 13.75];

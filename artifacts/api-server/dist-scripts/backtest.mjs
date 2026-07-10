@@ -59825,9 +59825,7 @@ async function fetchBars(symbol2, interval2, from, to, opts = {}) {
 }
 
 // src/scripts/backtest.ts
-var SYMBOLS = [
-  "MSTR"
-];
+var SYMBOLS = ["AAPL"];
 var TRAIN_FRACTION = 0.65;
 var DECISION_TIMES_ET = [10.25, 11, 13.75];
 var MIN_DAILY_HISTORY = 25;

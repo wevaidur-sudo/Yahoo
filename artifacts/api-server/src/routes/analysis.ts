@@ -734,13 +734,153 @@ Return ONLY valid JSON (no markdown):
 // Scans a watchlist, picks the highest-conviction actionable setup, and
 // auto-generates a ≤$100 options strategy for it.
 
-const TOP_PICK_WATCHLIST = [
-  "AAPL","MSFT","NVDA","AMZN","TSLA","META","GOOGL",
-  "SPY","QQQ","AMD","NFLX","JPM","AVGO","COST","XOM",
+// ── Static core universe ────────────────────────────────────────────────────
+// 72 high-liquidity names spanning all 11 GICS sectors with active options
+// chains. Intentionally excludes Utilities and Real Estate (low intraday
+// momentum) and avoids clustering in any single sector.
+const CORE_WATCHLIST: readonly string[] = [
+  // Technology (11) ── reduced from original 8/15 concentration
+  "AAPL","MSFT","NVDA","AMD","META","GOOGL","AMZN","TSLA","AVGO","CRM","ORCL",
+  // Financials (9) ── banks, asset managers, payment networks
+  "JPM","GS","BAC","MS","V","MA","C","WFC","BLK",
+  // Healthcare (8) ── pharma, biotech, managed care
+  "UNH","LLY","ABBV","JNJ","PFE","MRK","AMGN","GILD",
+  // Energy (5) ── majors + services
+  "XOM","CVX","COP","SLB","OXY",
+  // Industrials (7) ── machinery, aerospace, logistics
+  "CAT","DE","HON","BA","GE","RTX","UPS",
+  // Consumer Discretionary (6)
+  "COST","HD","MCD","NKE","SBUX","TGT",
+  // Consumer Staples (5)
+  "PG","KO","WMT","PM","CL",
+  // Materials (4)
+  "FCX","NEM","LIN","DOW",
+  // Communication Services (5)
+  "NFLX","DIS","T","VZ","CMCSA",
+  // Utilities (3) ── rate-sensitive; active on macro days
+  "NEE","DUK","SO",
+  // Real Estate / REITs (3) ── rate-sensitive; move on Fed days
+  "AMT","PLD","EQIX",
+  // Broad-market index ETFs (4) ── basket momentum reads
+  "SPY","QQQ","IWM","DIA",
+  // Sector ETFs (8) ── rotation signals
+  "XLF","XLE","XLV","XLK","XLI","XLY","GLD","SLV",
 ];
 
-// Cache top-pick result for 2 minutes so refreshes are instant
-let topPickCache: { result: unknown; cachedAt: number } | null = null;
+// Deduplicate at module load time (guard against future editing accidents)
+const CORE_UNIVERSE: string[] = [...new Set(CORE_WATCHLIST)];
+
+// ── Dynamic daily mover screen ──────────────────────────────────────────────
+// Every trading day the market surfaces its own best candidates: earnings
+// beats, sector rotation, macro catalysts. This cache fetches Yahoo Finance's
+// most-active, day-gainers, and day-losers screens once per calendar day (ET)
+// and injects qualifying names alongside the static core so the scanner always
+// includes today's "in play" stocks — not just a fixed list decided weeks ago.
+
+interface DynamicMoverCache { symbols: string[]; dateKey: string }
+let dynamicMoverCache: DynamicMoverCache | null = null;
+
+/** Returns the ET calendar date as a string — used to key the daily cache. */
+function etDateKey(now: Date): string {
+  return now.toLocaleDateString("en-US", { timeZone: "America/New_York" });
+}
+
+/**
+ * Fetches today's market movers from Yahoo Finance screens, filters for
+ * liquid US-listed equities not already in the static core, and returns
+ * up to 25 unique symbols. Results are cached for the full trading day.
+ */
+async function fetchDynamicMovers(now: Date): Promise<string[]> {
+  const dateKey = etDateKey(now);
+  if (dynamicMoverCache?.dateKey === dateKey) return dynamicMoverCache.symbols;
+
+  try {
+    // Pull three screens concurrently; failures are non-fatal
+    const [actives, gainers, losers] = await Promise.allSettled([
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (yahooFinance as any).screener({ scrIds: "most_actives", count: 30 }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (yahooFinance as any).screener({ scrIds: "day_gainers",  count: 20 }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (yahooFinance as any).screener({ scrIds: "day_losers",   count: 20 }),
+    ]);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const extract = (r: PromiseSettledResult<any>): string[] =>
+      r.status === "fulfilled"
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? (r.value?.quotes ?? []).map((q: any) => q.symbol as string).filter(Boolean)
+        : [];
+
+    const candidates = [...new Set([
+      ...extract(actives),
+      ...extract(gainers),
+      ...extract(losers),
+    ])].slice(0, 50);
+
+    if (!candidates.length) {
+      dynamicMoverCache = { symbols: [], dateKey };
+      return [];
+    }
+
+    // Validate: US-listed common equity, price ≥ $5, avg daily vol ≥ 500k,
+    // no ADR dot notation, not already in the static core.
+    const quoteChecks = await Promise.allSettled(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      candidates.map((sym) => (yahooFinance as any).quote(sym) as Promise<any>),
+    );
+
+    const qualified = quoteChecks
+      .filter((r): r is PromiseFulfilledResult<NonNullable<unknown>> => r.status === "fulfilled")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((r) => (r as PromiseFulfilledResult<any>).value)
+      .filter((q) =>
+        q.quoteType === "EQUITY" &&
+        q.market === "us_market" &&
+        (q.regularMarketPrice ?? 0) >= 5 &&
+        ((q.averageDailyVolume3Month ?? q.averageDailyVolume10Day ?? 0) as number) >= 500_000 &&
+        !(q.symbol as string).includes(".") && // exclude ADR dot notation
+        !CORE_UNIVERSE.includes(q.symbol as string),
+      )
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((q: any) => q.symbol as string)
+      .slice(0, 25);
+
+    dynamicMoverCache = { symbols: qualified, dateKey };
+    return qualified;
+  } catch {
+    // Dynamic screen failure is non-fatal — fall back to static core only
+    dynamicMoverCache = { symbols: [], dateKey };
+    return [];
+  }
+}
+
+// ── Scoring helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Score symbols in concurrent batches of `batchSize` to stay well within
+ * Yahoo Finance's soft rate limits when the universe grows to 90+ names.
+ */
+async function scoreUniverse(
+  symbols: string[],
+  now: Date,
+  batchSize = 25,
+): Promise<NonNullable<Awaited<ReturnType<typeof scoreSymbol>>>[]> {
+  const results: NonNullable<Awaited<ReturnType<typeof scoreSymbol>>>[] = [];
+  for (let i = 0; i < symbols.length; i += batchSize) {
+    const batch = symbols.slice(i, i + batchSize);
+    const settled = await Promise.allSettled(batch.map((sym) => scoreSymbol(sym, now)));
+    for (const r of settled) {
+      if (r.status === "fulfilled" && r.value !== null) results.push(r.value);
+    }
+  }
+  return results;
+}
+
+// Cache top-pick result for 2 minutes so refreshes are instant.
+// Also store the ET date so a day rollover always invalidates the cache
+// even if it's within the 2-minute TTL window.
+let topPickCache: { result: unknown; cachedAt: number; dateKey: string } | null = null;
 const TOP_PICK_TTL_MS = 2 * 60 * 1000;
 
 const SETUP_BONUS: Record<string, number> = {
@@ -817,23 +957,26 @@ async function scoreSymbol(symbol: string, now: Date) {
 
 router.get("/finance/top-pick", async (req, res): Promise<void> => {
   // Serve from cache if fresh
-  if (topPickCache && Date.now() - topPickCache.cachedAt < TOP_PICK_TTL_MS) {
+  const now = new Date();
+  const nowDateKey = etDateKey(now);
+  // Serve from cache only if it's within TTL AND still the same ET calendar day.
+  // A day rollover must bypass the cache so dynamic movers refresh immediately.
+  if (
+    topPickCache &&
+    topPickCache.dateKey === nowDateKey &&
+    Date.now() - topPickCache.cachedAt < TOP_PICK_TTL_MS
+  ) {
     res.json(topPickCache.result);
     return;
   }
   try {
-    const now = new Date();
 
-    // Score all watchlist symbols concurrently
-    const raw = await Promise.allSettled(
-      TOP_PICK_WATCHLIST.map((sym) => scoreSymbol(sym, now)),
-    );
+    // Build today's scan universe: static core + dynamic daily movers
+    const dynamicSymbols = await fetchDynamicMovers(now);
+    const scanUniverse = [...CORE_UNIVERSE, ...dynamicSymbols];
 
-    const scored = raw
-      .filter((r): r is PromiseFulfilledResult<NonNullable<Awaited<ReturnType<typeof scoreSymbol>>>> =>
-        r.status === "fulfilled" && r.value !== null,
-      )
-      .map((r) => r.value)
+    // Score all symbols in batched-concurrent passes
+    const scored = (await scoreUniverse(scanUniverse, now))
       .sort((a, b) => b.score - a.score);
 
     if (!scored.length) {
@@ -1080,7 +1223,7 @@ Return ONLY valid JSON (no markdown):
         score:      +s.score.toFixed(1),
       })),
     };
-    topPickCache = { result: payload, cachedAt: Date.now() };
+    topPickCache = { result: payload, cachedAt: Date.now(), dateKey: nowDateKey };
     res.json(payload);
   } catch (err: unknown) {
     res.status(500).json({ error: "Failed to compute top pick" });

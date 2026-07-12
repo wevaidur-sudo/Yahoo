@@ -280,7 +280,9 @@ export function assessDataQuality(params: {
 }): DataQualityFlags {
   const { quoteTimeMs, now, contracts } = params;
   const quoteAgeSeconds = quoteTimeMs ? Math.round((now.getTime() - quoteTimeMs) / 1000) : null;
-  const quoteStale = quoteAgeSeconds !== null && quoteAgeSeconds > 900; // >15 min is stale for a "live" quote
+  // >10 min is stale for options strategy purposes. Yahoo Finance free tier can
+  // delay quotes by up to 15 min; anything beyond 10 min is flagged prominently.
+  const quoteStale = quoteAgeSeconds !== null && quoteAgeSeconds > 600;
 
   const liquidityWarnings: string[] = [];
   for (const c of contracts) {

@@ -570,6 +570,23 @@ router.post("/finance/options-strategy/:symbol", async (req, res): Promise<void>
     const currentPrice = (q.regularMarketPrice ?? 0) as number;
     const r            = riskFreeRate.status === "fulfilled" ? riskFreeRate.value : FALLBACK_RISK_FREE_RATE;
 
+    // ── Fix 5: Hard staleness gate ────────────────────────────────────────────
+    // During regular market hours a quote older than 15 min means Yahoo Finance
+    // is rate-limiting or the symbol is halted — stale prices make every Greeks
+    // calculation unreliable. Block immediately; outside regular hours (pre/post
+    // market, weekends) stale quotes are expected and we proceed with a warning.
+    const _quoteTsMs  = q.regularMarketTime ? new Date(q.regularMarketTime).getTime() : null;
+    const _quoteAgeSec = _quoteTsMs ? Math.round((now.getTime() - _quoteTsMs) / 1000) : null;
+    const _mktState   = getMarketState(now);
+    if (_mktState.isRegularHours && _quoteAgeSec !== null && _quoteAgeSec > 900) {
+      res.status(422).json({
+        error: `Quote data for ${symbol} is ${Math.round(_quoteAgeSec / 60)} min old. ` +
+          `Options pricing requires current prices during market hours. ` +
+          `Yahoo Finance may be rate-limiting — wait 30 seconds and try again.`,
+      });
+      return;
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const histQuotes: any[] = history.status === "fulfilled" ? history.value?.quotes ?? [] : [];
     const closes  = histQuotes.map((p: any) => p.close).filter(Boolean) as number[];
@@ -723,6 +740,9 @@ Return ONLY valid JSON (no markdown):
     // When you BUY you pay the ask; when you SELL you receive the bid.
     // In both cases the friction is (ask - bid) / 2 per share.
     const legSlippage: number[] = [];
+    // Fix 4: Track when the nearest-available strike differs from what the AI requested.
+    // Users see AI reasoning written for the requested strike — we must show them the delta.
+    const legMismatches: Array<{ type: string; requestedStrike: number | null; filledStrike: number; diff: number }> = [];
     let earliestExpiry: Date | null = null;
     const ivSamples: number[] = [];
 
@@ -768,6 +788,16 @@ Return ONLY valid JSON (no markdown):
         ? (contract.ask - contract.bid) / 2
         : (midPrice != null ? midPrice * 0.05 : 0); // fallback: 5% of mid when no B/A
       legSlippage.push(halfSpread * ratio * 100);
+      // Fix 4: record strike mismatch when nearest-available differs from AI request
+      const requestedStrike = typeof leg.strike === "number" ? leg.strike : null;
+      if (requestedStrike !== null && Math.abs(contract.strike - requestedStrike) > 0.01) {
+        legMismatches.push({
+          type: leg.type,
+          requestedStrike,
+          filledStrike: contract.strike,
+          diff: +(contract.strike - requestedStrike).toFixed(2),
+        });
+      }
       usedContracts.push({ label: `${leg.type.toUpperCase()} ${contract.strike}`, volume: contract.volume, openInterest: contract.openInterest, bid: contract.bid, ask: contract.ask });
       resolvedLegs.push({
         type: leg.type === "put" ? "put" : "call", action: leg.action === "sell" ? "sell" : "buy",
@@ -838,21 +868,56 @@ Return ONLY valid JSON (no markdown):
     const effectiveMaxLoss   = typeof finalMetrics.maxLoss === "number"
       ? finalMetrics.maxLoss   - scaledFriction : finalMetrics.maxLoss;
 
+    // ── Fix 3: Hard block on unlimited-risk strategies ────────────────────────
+    // Naked short legs (short call/put with no covering long) have theoretically
+    // unlimited downside. We refuse to size or return these; the AI prompt already
+    // instructs defined-risk only, but this is the server-side enforcement layer.
+    if (effectiveMaxLoss === "unlimited" || finalMetrics.maxLoss === "unlimited") {
+      res.status(422).json({
+        error:
+          `${aiOutput.strategyName ?? "This strategy"} contains a naked short leg with unlimited downside risk. ` +
+          `Only defined-risk structures (vertical spreads, covered calls, cash-secured puts, iron condors) are permitted. ` +
+          `Regenerate — the AI will choose a capped-risk alternative.`,
+      });
+      return;
+    }
+
     // ── Position sizing — 2% rule ─────────────────────────────────────────────
     const riskDollars = typeof effectiveMaxLoss === "number" ? Math.abs(effectiveMaxLoss) : null;
+
+    // Fix 2: Hard block — if accountSize was supplied, enforce 2% risk limit.
+    // A position that risks more than 2% of account is rejected, not warned.
+    if (validAccountSize && riskDollars != null) {
+      const maxAllowed2 = validAccountSize * 0.02;
+      if (riskDollars > maxAllowed2) {
+        const riskPct = +(riskDollars / validAccountSize * 100).toFixed(1);
+        res.status(422).json({
+          error:
+            `Position risk (${riskDollars.toFixed(0)}, ${riskPct}% of your ${validAccountSize.toLocaleString()} account) ` +
+            `exceeds the 2% rule (${maxAllowed2.toFixed(0)} maximum). ` +
+            `Reduce your trade capital, choose a tighter spread, or increase your account size.`,
+          positionSizing: {
+            accountSize: validAccountSize,
+            riskDollars: +riskDollars.toFixed(2),
+            riskPercent: +riskPct,
+            maxAllowedFor2Pct: +maxAllowed2.toFixed(2),
+            exceedsRule: true,
+          },
+        });
+        return;
+      }
+    }
+
     const positionSizing = validAccountSize && riskDollars != null ? (() => {
       const riskPct     = riskDollars / validAccountSize * 100;
       const maxAllowed2 = validAccountSize * 0.02;
-      const exceeds     = riskDollars > maxAllowed2;
       return {
         accountSize:       validAccountSize,
         riskDollars:       +riskDollars.toFixed(2),
         riskPercent:       +riskPct.toFixed(2),
         maxAllowedFor2Pct: +maxAllowed2.toFixed(2),
-        exceedsRule:       exceeds,
-        recommendation:    exceeds
-          ? `This position risks ${riskDollars.toFixed(0)} (${riskPct.toFixed(1)}% of your ${validAccountSize.toLocaleString()} account). The 2% rule caps risk at ${maxAllowed2.toFixed(0)}. Consider reducing size or choosing a tighter spread.`
-          : `Risk (${riskDollars.toFixed(0)}) is ${riskPct.toFixed(1)}% of your ${validAccountSize.toLocaleString()} account — within the 2% professional guideline.`,
+        exceedsRule:       false,
+        recommendation:    `Risk (${riskDollars.toFixed(0)}) is ${riskPct.toFixed(1)}% of your ${validAccountSize.toLocaleString()} account — within the 2% professional guideline.`,
       };
     })() : null;
 
@@ -903,6 +968,12 @@ Return ONLY valid JSON (no markdown):
       effectiveMaxLoss:   formatMoney(effectiveMaxLoss, true),
       // ── Position sizing ──────────────────────────────────────────────────
       positionSizing,
+      // ── Fix 4: Leg mismatch transparency ─────────────────────────────────
+      // Tells the UI when the nearest-available strike differs from what the AI
+      // described in its reasoning. The user can then calibrate trust accordingly.
+      legMismatches,
+      // ── Data latency note (always present) ───────────────────────────────
+      dataLatencyNote: "Market data sourced from Yahoo Finance (free tier). Quotes may be delayed up to 15 minutes during market hours. Always verify current price and bid/ask with your broker before placing any order.",
       probability: computedPoP,
       probabilityMethod: "Black-Scholes risk-neutral lognormal distribution using live implied volatility",
       riskLevel: aiOutput.riskLevel ?? "medium",

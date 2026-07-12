@@ -90,26 +90,33 @@ function StatPill({
 
 function DataQualityBanner({ dataQuality }: { dataQuality: any }) {
   if (!dataQuality) return null;
-  const hasIssues =
-    dataQuality.quoteStale || (dataQuality.liquidityWarnings?.length ?? 0) > 0;
-  if (!hasIssues) return null;
+  const isStale = dataQuality.quoteStale;
+  const warnings: string[] = dataQuality.liquidityWarnings ?? [];
+  if (!isStale && warnings.length === 0) return null;
+
   return (
-    <div className="flex items-start gap-3 p-4 rounded-xl bg-yellow-400/5 border border-yellow-400/20">
-      <ShieldAlert className="w-5 h-5 text-yellow-400 mt-0.5 flex-shrink-0" />
-      <div className="space-y-1 text-sm">
-        {dataQuality.quoteStale && (
-          <p className="text-yellow-400 font-medium">
-            Quote data is{" "}
-            {Math.round((dataQuality.quoteAgeSeconds ?? 0) / 60)} min old —
-            treat prices as delayed.
-          </p>
-        )}
-        {dataQuality.liquidityWarnings?.map((w: string, i: number) => (
-          <p key={i} className="text-muted-foreground">
-            {w}
-          </p>
-        ))}
+    <div className={cn(
+      "rounded-xl border p-4 space-y-2",
+      isStale
+        ? "bg-destructive/10 border-destructive/30"
+        : "bg-yellow-400/5 border-yellow-400/20"
+    )}>
+      <div className="flex items-center gap-2">
+        <ShieldAlert className={cn("w-4 h-4 flex-shrink-0 mt-0.5", isStale ? "text-destructive" : "text-yellow-400")} />
+        <span className={cn("text-xs font-semibold uppercase tracking-wider", isStale ? "text-destructive" : "text-yellow-400")}>
+          {isStale ? "Stale Data Warning — Verify Before Trading" : "Liquidity Warnings"}
+        </span>
       </div>
+      {isStale && (
+        <p className="text-sm text-destructive font-medium">
+          Quote is {Math.round((dataQuality.quoteAgeSeconds ?? 0) / 60)} min old.
+          {" "}All Greeks, PoP, and breakevens are computed from this stale price.
+          {" "}<strong>Do not trade on these numbers without confirming the current bid/ask with your broker.</strong>
+        </p>
+      )}
+      {warnings.map((w: string, i: number) => (
+        <p key={i} className="text-xs text-muted-foreground">{w}</p>
+      ))}
     </div>
   );
 }
@@ -206,24 +213,32 @@ function ProminentDisclaimer() {
   return (
     <div className="flex items-start gap-4 p-5 rounded-2xl border border-amber-500/30 bg-amber-500/5">
       <ShieldAlert className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <p className="text-sm font-semibold text-amber-400 tracking-tight">
           For Informational Purposes Only — Not Financial Advice
         </p>
         <p className="text-xs text-muted-foreground leading-relaxed">
-          The{" "}
-          <strong className="text-foreground">Intraday Signal Score</strong> is
-          computed deterministically from standard financial formulas (VWAP,
-          ORB, RSI, MACD). The{" "}
-          <strong className="text-foreground">AI Commentary</strong> is
-          qualitative narrative from a large language model — not a forecast.{" "}
+          The <strong className="text-foreground">Intraday Signal Score</strong> is
+          computed deterministically from standard financial formulas (VWAP, ORB, RSI, MACD).
+          The <strong className="text-foreground">AI Commentary</strong> is qualitative
+          narrative from a large language model — not a forecast.{" "}
           <strong className="text-foreground">
             Neither constitutes investment advice or a trading recommendation.
           </strong>{" "}
-          Past indicator readings do not guarantee future price movements.
-          Options trading involves substantial risk of loss and is not suitable
-          for all investors. Consult a licensed financial advisor before making
-          any investment decision.
+          Past indicator readings do not guarantee future price movements. Options trading
+          involves substantial risk of loss and is not suitable for all investors. Consult
+          a licensed financial advisor before making any investment decision.
+        </p>
+        <p className="text-xs text-muted-foreground leading-relaxed border-t border-amber-500/10 pt-2">
+          <strong className="text-amber-400/80">⚠ Data latency:</strong>{" "}
+          Market data is sourced from Yahoo Finance's free tier, which may delay
+          quotes by <strong className="text-foreground">up to 15 minutes</strong> during
+          regular market hours. All Greeks, probability estimates, and breakeven
+          calculations are only as accurate as the underlying quote.{" "}
+          <strong className="text-foreground">
+            Always confirm the current bid/ask and price with your broker before
+            placing any order.
+          </strong>
         </p>
       </div>
     </div>
@@ -965,6 +980,37 @@ function OptionsStrategyPanel({ symbol }: { symbol: string }) {
                       {leg.premium != null && <span className="font-mono text-sm text-muted-foreground">@${leg.premium.toFixed(2)}</span>}
                     </div>
                     <GreeksRow iv={leg.impliedVolatility} delta={leg.delta} theo={leg.theoreticalPrice} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Fix 4: Leg mismatch disclosure */}
+          {strategy.legMismatches?.length > 0 && (
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                <h5 className="text-xs font-semibold uppercase tracking-wider text-amber-500">
+                  Strike Fill Differences
+                </h5>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The AI reasoned about strikes that weren't available in the live chain.
+                Filled strikes are shown in the legs above. The AI's rationale was written
+                for the requested strikes — verify that the thesis still holds at the actual fills.
+              </p>
+              <div className="space-y-1">
+                {strategy.legMismatches.map((m: any, i: number) => (
+                  <div key={i} className="flex items-center gap-2 font-mono text-xs">
+                    <span className="uppercase text-muted-foreground/70 w-8">{m.type}</span>
+                    <span className="text-muted-foreground">AI requested</span>
+                    <span className="text-foreground font-semibold">${m.requestedStrike}</span>
+                    <span className="text-muted-foreground">→ filled at</span>
+                    <span className="text-amber-400 font-semibold">${m.filledStrike}</span>
+                    <span className={cn("ml-auto", m.diff > 0 ? "text-[#00C853]" : "text-[#FF333A]")}>
+                      {m.diff > 0 ? "+" : ""}{m.diff}
+                    </span>
                   </div>
                 ))}
               </div>

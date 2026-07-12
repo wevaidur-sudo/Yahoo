@@ -1,0 +1,84 @@
+The user just imported this project from a GitHub repository. It could be anything — an app to run on Replit, a library, a fork to study, code to reuse — so the first thing to do is ask what they want; everything after depends on the answer.
+
+It generated this
+
+Four bugs visible in that screenshot:
+
+0DTE expiry on July 10 — the MIN_DTE = 7 filter isn't blocking it
+Strikes $8/$9 on what must be a stock priced far higher — the ±15% ATM filter isn't working
+100% PoP passing the 25% gate (it's a deep-OTM credit spread, mathematically "guaranteed" but worthless)
+Negative total cost and N/A breakeven
+Let me read the chain-building code to find all four root causes at once.
+
+I need to trace the full options strategy flow — there may be multiple code paths. Let me look at both the strategy generator endpoint AND the UI that drives it.
+
+The "Generate" button hits the separate POST /finance/options-strategy/:symbol endpoint. Let me read that fully.
+
+Found it. The POST /finance/options-strategy/:symbol endpoint (the "Generate" button) is an entirely separate code path from the top-pick flow — it has none of the professional filters added previously. Specifically:
+
+Line 544: no DTE filter — allChains = optionsData.value.options.slice(0, 3) takes whatever Yahoo returns, including today's 0DTE chain
+Line 549–553: no near-ATM filter — shows all volume > 0 contracts, which is how strikes $8/$9 surfaced
+Prompt (line 556): no DTE minimum rule, no delta target, no PoP target, no spread-fallback rule
+Line 719: no PoP quality gate — 100% passes straight through
+Fixing all four in the standalone endpoint now:
+
+Now add the PoP quality gate to the standalone endpoint's response:
+
+Three more holes to close. Let me read the relevant sections precisely before editing.
+
+Now applying the three remaining fixes:
+
+Guard against empty allChains before calling the AI
+Server-side near-ATM + liquidity enforcement during leg resolution
+Require live IV for PoP gate acceptance
+Now update the PoP gate to also require at least one live IV sample before accepting the strategy:
+
+Clean build. Here's what was wrong and what changed:
+
+Root cause of the screenshot
+
+The "Generate" button hits a completely separate endpoint (POST /finance/options-strategy/:symbol) that had none of the professional filters added to the top-pick flow. It was taking options chains raw from Yahoo Finance — including today's 0DTE chain — and passing them to the AI with no constraints.
+
+What produced each symptom:
+
+Symptom	Cause	Fix
+Expiry Jul 10 (0DTE)	No DTE filter on this endpoint	Same MIN_DTE=7 / IDEAL_DTE=21 filter now applied
+Strikes $8 and $9	No near-ATM filter — any contract with volume > 0 shown to AI	±15% of spot filter on chain summary; server-side ±25% hard cap during leg resolution
+100% PoP	0DTE → T≈0 in Black-Scholes → PoP approaches 1.0 mathematically	PoP > 99% now rejected; also rejects if no live IV exists
+Negative total cost	Higher strike worth more than lower strike (inverted/stale pricing) → net credit on a "debit" spread	Near-ATM + liquidity enforcement eliminates these mispriced contracts before they reach the AI
+Additional guards added:
+
+If no chains with ≥7 DTE exist for a symbol, the server returns a clear 422 error before calling the AI (saves a round-trip and gives the user an actionable message)
+Leg resolution enforces OI ≥ 10 and volume ≥ 1 server-side — AI prompt constraints alone aren't enough since the AI can still output whatever it wants
+Strategy is rejected if no contracts with live implied volatility were resolved (prevents PoP from being "computed" from a synthetic fallback volatility)
+Refresh server and clear cache
+
+Both services are up and running clean:
+
+API Server — rebuilt and listening on port 8080, all in-memory caches (top-pick, dynamic movers) cleared
+Frontend — Vite restarted, module cache flushed
+Hard-refresh the preview pane (Cmd/Ctrl + Shift + R) to clear the browser side as well.
+
+Is the app professionally reliable to trade
+
+Honest answer: not yet, but closer than most retail tools.
+
+Here's what the audit found:
+
+✅ What works correctly
+Signal engine — The buy/sell signals are deterministic and mathematically sound. RSI, MACD, VWAP, and ORB are all implemented correctly with no lookahead bias. The ORB has a 15-minute formation window (9:30–9:45 ET) to prevent false early breakouts. Only setup types that passed backtesting are allowed through.
+
+Options math — Black-Scholes uses real inputs (live IV from Yahoo, live T-bill rate for risk-free rate). Probability of Profit is computed via a 6,000-step integration of the lognormal terminal price distribution — not an AI guess. The PoP gates (25% floor, 99% ceiling, live IV required) prevent garbage from surfacing.
+
+Data staleness — There's a 15-minute staleness check. If quote data is stale, the UI shows a warning banner.
+
+Error handling — Promise.allSettled on all data fetches means partial failures (missing news, no options chain) degrade gracefully rather than crashing.
+
+⚠️ What makes it conditional right now
+No position sizing — The app takes your dollar amount and scales contracts, but there's no portfolio-level guardrail. A professional system caps risk at 1–2% of total account per trade. This app has no concept of your total account size.
+
+Slippage and commissions not modeled — Max profit/loss numbers assume perfect fill at mid-price. Real fills on options, especially spreads, are worse. For a $100 budget this matters a lot — a $1.50 commission round-trip is 3% of capital before the trade does anything.
+
+Yahoo Finance rate limiting — The app makes 5 API calls per symbol and scans up to ~97 symbols. Yahoo enforces undocumented IP-based limits. Under heavy use or during market open rush, some fetches will get throttled and return stale or partial data silently.
+
+No order routing — The app tells you what to trade, not how to get filled. Limit order vs. market order vs. midpoint strategy for a vertical spread matters enormously in illiquid names.

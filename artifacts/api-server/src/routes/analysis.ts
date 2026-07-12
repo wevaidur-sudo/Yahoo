@@ -28,6 +28,45 @@ const yahooFinance = new (YahooFinance as any)({ suppressNotices: ["yahooSurvey"
 
 const router: IRouter = Router();
 
+// ─── Resilience helpers ───────────────────────────────────────────────────────
+
+/**
+ * Wraps a promise factory in a hard wall-clock timeout.
+ * If the inner promise doesn't settle within `ms`, rejects with a timeout error.
+ */
+function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Yahoo Finance call timed out after ${ms}ms`)), ms);
+    fn().then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
+/**
+ * Retries a thunk up to `maxRetries` times with exponential back-off.
+ * Designed for transient Yahoo Finance 429 / connection-reset errors.
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 1,
+  baseDelayMs = 500,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try { return await fn(); } catch (err) {
+      lastErr = err;
+      if (attempt < maxRetries) await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** attempt));
+    }
+  }
+  throw lastErr;
+}
+
+// ─── Cost model constants ─────────────────────────────────────────────────────
+// Schwab / TD Ameritrade / E*TRADE standard rate. Used for every options leg.
+const COMMISSION_PER_CONTRACT = 0.65; // USD per contract, per leg, one-way
+
 // ─── Technical Indicator Helpers (reused for intraday bar computation) ─────────
 
 function calcEMA(values: number[], period: number): number[] {
@@ -494,7 +533,10 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
 
 router.post("/finance/options-strategy/:symbol", async (req, res): Promise<void> => {
   const symbol = (req.params.symbol || "").toUpperCase();
-  const { investmentAmount } = req.body || {};
+  const { investmentAmount, accountSize } = req.body || {};
+  const validAccountSize =
+    typeof accountSize === "number" && isFinite(accountSize) && accountSize > 0
+      ? accountSize : null;
 
   if (!symbol) {
     res.status(400).json({ error: "Symbol is required" });
@@ -677,6 +719,10 @@ Return ONLY valid JSON (no markdown):
     // Resolve each leg to a real contract from the fetched chain
     const usedContracts: Array<{ label: string; volume?: number | null; openInterest?: number | null; bid?: number | null; ask?: number | null }> = [];
     const resolvedLegs: (PayoffLeg & { impliedVolatility?: number | null; delta?: number | null; theoreticalPrice?: number | null; expiryDate?: Date })[] = [];
+    // Half-spread slippage (dollars) for each leg — parallel to resolvedLegs.
+    // When you BUY you pay the ask; when you SELL you receive the bid.
+    // In both cases the friction is (ask - bid) / 2 per share.
+    const legSlippage: number[] = [];
     let earliestExpiry: Date | null = null;
     const ivSamples: number[] = [];
 
@@ -684,6 +730,7 @@ Return ONLY valid JSON (no markdown):
       const ratio = Math.max(1, Math.round(leg.contractRatio ?? 1));
       if (leg.type === "stock") {
         resolvedLegs.push({ type: "stock", action: leg.action === "sell" ? "sell" : "buy", premium: currentPrice, contracts: ratio * 100 });
+        legSlippage.push(0); // stock slippage modeled separately; omit here
         continue;
       }
       const chain  = allChains.find((c: any) => new Date(c.expirationDate).toDateString() === leg.expiry) ?? allChains[0];
@@ -715,6 +762,12 @@ Return ONLY valid JSON (no markdown):
       const iv = contract.impliedVolatility;
       if (iv > 0) ivSamples.push(iv);
       const bs = iv > 0 ? blackScholes({ spot: currentPrice, strike: contract.strike, timeToExpiryYears: T, riskFreeRate: r, volatility: iv, optionType: leg.type === "put" ? "put" : "call" }) : null;
+      // Track per-leg half-spread slippage: both BUY (pay ask) and SELL (receive bid)
+      // incur half-spread friction in the same direction.
+      const halfSpread = contract.bid > 0 && contract.ask > 0
+        ? (contract.ask - contract.bid) / 2
+        : (midPrice != null ? midPrice * 0.05 : 0); // fallback: 5% of mid when no B/A
+      legSlippage.push(halfSpread * ratio * 100);
       usedContracts.push({ label: `${leg.type.toUpperCase()} ${contract.strike}`, volume: contract.volume, openInterest: contract.openInterest, bid: contract.bid, ask: contract.ask });
       resolvedLegs.push({
         type: leg.type === "put" ? "put" : "call", action: leg.action === "sell" ? "sell" : "buy",
@@ -729,6 +782,13 @@ Return ONLY valid JSON (no markdown):
       res.status(500).json({ error: "Could not resolve strategy legs against live options data" });
       return;
     }
+
+    // ── Per-unit commission + slippage (Schwab/TD standard, one-way open) ────
+    const optionLegsUnit = resolvedLegs.filter((l) => l.type !== "stock");
+    const unitContracts  = optionLegsUnit.reduce((s, l) => s + l.contracts, 0);
+    const unitCommission = unitContracts * COMMISSION_PER_CONTRACT;
+    const unitSlippage   = legSlippage.reduce((s, v) => s + v, 0);
+    const unitFriction   = unitCommission + unitSlippage;
 
     const unitMetrics = computeStrategyMetrics({
       legs: resolvedLegs, spot: currentPrice,
@@ -752,14 +812,14 @@ Return ONLY valid JSON (no markdown):
     if (!isFinite(requiredCapitalPerUnit)) {
       multiplier = 1;
     } else if (requiredCapitalPerUnit > investmentAmount) {
-      res.status(422).json({ error: `The ${aiOutput.strategyName ?? "selected strategy"} requires at least $${requiredCapitalPerUnit.toLocaleString(undefined, { maximumFractionDigits: 2 })} per contract, which exceeds your $${investmentAmount.toLocaleString()} budget. Try a larger amount or ask for a narrower spread.` });
+      res.status(422).json({ error: `The ${aiOutput.strategyName ?? "selected strategy"} requires at least ${requiredCapitalPerUnit.toLocaleString(undefined, { maximumFractionDigits: 2 })} per contract, which exceeds your ${investmentAmount.toLocaleString()} budget. Try a larger amount or ask for a narrower spread.` });
       return;
     } else {
       multiplier = Math.max(1, Math.floor(investmentAmount / requiredCapitalPerUnit));
     }
     multiplier = Math.min(multiplier, 500);
 
-    const scaledLegs  = resolvedLegs.map((leg) => ({ ...leg, contracts: leg.contracts * multiplier }));
+    const scaledLegs   = resolvedLegs.map((leg) => ({ ...leg, contracts: leg.contracts * multiplier }));
     const finalMetrics = computeStrategyMetrics({
       legs: scaledLegs, spot: currentPrice,
       avgVolatility: ivSamples.length ? ivSamples.reduce((a, b) => a + b, 0) / ivSamples.length : 0.3,
@@ -767,12 +827,42 @@ Return ONLY valid JSON (no markdown):
       riskFreeRate: r,
     });
 
+    // ── Scaled friction & effective metrics ───────────────────────────────────
+    const scaledCommission  = unitCommission * multiplier;
+    const scaledSlippage    = unitSlippage   * multiplier;
+    const scaledFriction    = scaledCommission + scaledSlippage;
+    // Friction always reduces profit and deepens loss magnitude.
+    const effectiveNetCost   = finalMetrics.netCost + scaledFriction;
+    const effectiveMaxProfit = typeof finalMetrics.maxProfit === "number"
+      ? finalMetrics.maxProfit - scaledFriction : finalMetrics.maxProfit;
+    const effectiveMaxLoss   = typeof finalMetrics.maxLoss === "number"
+      ? finalMetrics.maxLoss   - scaledFriction : finalMetrics.maxLoss;
+
+    // ── Position sizing — 2% rule ─────────────────────────────────────────────
+    const riskDollars = typeof effectiveMaxLoss === "number" ? Math.abs(effectiveMaxLoss) : null;
+    const positionSizing = validAccountSize && riskDollars != null ? (() => {
+      const riskPct     = riskDollars / validAccountSize * 100;
+      const maxAllowed2 = validAccountSize * 0.02;
+      const exceeds     = riskDollars > maxAllowed2;
+      return {
+        accountSize:       validAccountSize,
+        riskDollars:       +riskDollars.toFixed(2),
+        riskPercent:       +riskPct.toFixed(2),
+        maxAllowedFor2Pct: +maxAllowed2.toFixed(2),
+        exceedsRule:       exceeds,
+        recommendation:    exceeds
+          ? `This position risks ${riskDollars.toFixed(0)} (${riskPct.toFixed(1)}% of your ${validAccountSize.toLocaleString()} account). The 2% rule caps risk at ${maxAllowed2.toFixed(0)}. Consider reducing size or choosing a tighter spread.`
+          : `Risk (${riskDollars.toFixed(0)}) is ${riskPct.toFixed(1)}% of your ${validAccountSize.toLocaleString()} account — within the 2% professional guideline.`,
+      };
+    })() : null;
+
     const dataQuality = assessDataQuality({ quoteTimeMs: q.regularMarketTime ? new Date(q.regularMarketTime).getTime() : null, now, contracts: usedContracts });
     (dataQuality as any).riskFreeRate = +(r * 100).toFixed(2);
     if (unlimitedRiskWarning) dataQuality.liquidityWarnings.push(unlimitedRiskWarning);
 
-    const formatMoney = (v: number | "unlimited") =>
-      v === "unlimited" ? "Unlimited" : `$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}${v < 0 ? " (loss)" : ""}`;
+    const formatMoney = (v: number | "unlimited", forceAbs = false) =>
+      v === "unlimited" ? "Unlimited"
+        : `${(forceAbs ? Math.abs(v as number) : (v as number)).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
     // ── Professional PoP quality gate ────────────────────────────────────────
     // Reject strategies the math confirms are near-worthless. 0DTE-induced
@@ -798,11 +888,21 @@ Return ONLY valid JSON (no markdown):
         impliedVolatility: (leg as any).impliedVolatility ?? null,
         delta: (leg as any).delta ?? null, theoreticalPrice: (leg as any).theoreticalPrice ?? null,
       })),
-      totalCost: finalMetrics.netCost,
-      maxProfit: formatMoney(finalMetrics.maxProfit),
-      maxLoss:   formatMoney(finalMetrics.maxLoss),
+      // ── Theoretical (mid-price, pre-cost) ────────────────────────────────
+      totalCost:  finalMetrics.netCost,
+      maxProfit:  formatMoney(finalMetrics.maxProfit),
+      maxLoss:    formatMoney(finalMetrics.maxLoss),
       breakeven:  finalMetrics.breakevens.length ? finalMetrics.breakevens.map((b) => `${b.toFixed(2)}`).join(" / ") : "N/A",
       breakevens: finalMetrics.breakevens,
+      // ── After commissions + slippage ─────────────────────────────────────
+      commission:         +scaledCommission.toFixed(2),
+      slippage:           +scaledSlippage.toFixed(2),
+      friction:           +scaledFriction.toFixed(2),
+      effectiveCost:      +effectiveNetCost.toFixed(2),
+      effectiveMaxProfit: formatMoney(effectiveMaxProfit),
+      effectiveMaxLoss:   formatMoney(effectiveMaxLoss, true),
+      // ── Position sizing ──────────────────────────────────────────────────
+      positionSizing,
       probability: computedPoP,
       probabilityMethod: "Black-Scholes risk-neutral lognormal distribution using live implied volatility",
       riskLevel: aiOutput.riskLevel ?? "medium",
@@ -960,6 +1060,11 @@ async function scoreUniverse(
     for (const r of settled) {
       if (r.status === "fulfilled" && r.value !== null) results.push(r.value);
     }
+    // Brief pause between batches to stay inside Yahoo Finance's soft rate limits.
+    // Without this, 90+ concurrent symbols trigger IP-based throttling silently.
+    if (i + batchSize < symbols.length) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
   }
   return results;
 }
@@ -984,17 +1089,17 @@ async function scoreSymbol(symbol: string, now: Date) {
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const threeDaysAgo  = new Date(now.getTime() -  3 * 24 * 60 * 60 * 1000);
 
+  // Each Yahoo Finance call is wrapped in a 10-second hard timeout and one
+  // automatic retry (500ms back-off). This prevents a single slow/throttled
+  // symbol from hanging an entire 25-symbol batch indefinitely.
+  const yCall = <T>(fn: () => Promise<T>) => withTimeout(10_000, () => withRetry(fn));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [quote, minuteData, fiveMinData, fifteenMinData, dailyData] = await Promise.allSettled([
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (yahooFinance as any).quote(symbol) as Promise<any>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (yahooFinance as any).chart(symbol, { period1: threeDaysAgo,  period2: now, interval: "1m"  }) as Promise<any>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (yahooFinance as any).chart(symbol, { period1: tenDaysAgo,    period2: now, interval: "5m"  }) as Promise<any>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (yahooFinance as any).chart(symbol, { period1: tenDaysAgo,    period2: now, interval: "15m" }) as Promise<any>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (yahooFinance as any).chart(symbol, { period1: thirtyDaysAgo, period2: now, interval: "1d"  }) as Promise<any>,
+    yCall(() => (yahooFinance as any).quote(symbol) as Promise<any>),
+    yCall(() => (yahooFinance as any).chart(symbol, { period1: threeDaysAgo,  period2: now, interval: "1m"  }) as Promise<any>),
+    yCall(() => (yahooFinance as any).chart(symbol, { period1: tenDaysAgo,    period2: now, interval: "5m"  }) as Promise<any>),
+    yCall(() => (yahooFinance as any).chart(symbol, { period1: tenDaysAgo,    period2: now, interval: "15m" }) as Promise<any>),
+    yCall(() => (yahooFinance as any).chart(symbol, { period1: thirtyDaysAgo, period2: now, interval: "1d"  }) as Promise<any>),
   ]);
 
   if (quote.status === "rejected") return null;

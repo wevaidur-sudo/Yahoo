@@ -744,10 +744,11 @@ function IntradayLevelsCard({ levels }: { levels: any }) {
 // ─── Options Strategy Panel ────────────────────────────────────────────────────
 
 function OptionsStrategyPanel({ symbol }: { symbol: string }) {
-  const [amount, setAmount] = useState("");
-  const [strategy, setStrategy] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [amount, setAmount]       = useState("");
+  const [accountSize, setAccountSize] = useState("");
+  const [strategy, setStrategy]   = useState<any>(null);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState<string | null>(null);
 
   async function generate() {
     const num = parseFloat(amount);
@@ -757,10 +758,14 @@ function OptionsStrategyPanel({ symbol }: { symbol: string }) {
     setStrategy(null);
     try {
       const base = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
+      const acct = parseFloat(accountSize);
       const resp = await fetch(`${base}/api/finance/options-strategy/${symbol}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ investmentAmount: num }),
+        body: JSON.stringify({
+          investmentAmount: num,
+          ...(acct > 0 ? { accountSize: acct } : {}),
+        }),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
@@ -774,6 +779,8 @@ function OptionsStrategyPanel({ symbol }: { symbol: string }) {
     }
   }
 
+  const ps = strategy?.positionSizing;
+
   return (
     <div className="bg-card border border-card-border rounded-2xl p-6 md:p-8 shadow-sm space-y-6">
       <div className="flex items-center gap-3">
@@ -785,39 +792,47 @@ function OptionsStrategyPanel({ symbol }: { symbol: string }) {
             Options Strategy Generator
           </h3>
           <p className="text-xs text-muted-foreground">
-            Enter your capital — AI designs the highest-probability strategy
+            AI designs a strategy — commissions, slippage &amp; risk sizing included
           </p>
         </div>
       </div>
 
-      <div className="flex gap-3">
-        <div className="relative flex-1">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-mono text-sm">
-            $
-          </span>
-          <input
-            type="number"
-            min="1"
-            placeholder="e.g. 5000"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && generate()}
-            className="w-full bg-background border border-border rounded-lg pl-7 pr-4 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all"
-          />
+      {/* Inputs row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground font-medium">Trade capital</label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-mono text-sm">$</span>
+            <input
+              type="number" min="1" placeholder="e.g. 500"
+              value={amount} onChange={(e) => setAmount(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && generate()}
+              className="w-full bg-background border border-border rounded-lg pl-7 pr-4 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all"
+            />
+          </div>
         </div>
-        <button
-          onClick={generate}
-          disabled={loading || !amount}
-          className="px-5 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2"
-        >
-          {loading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Zap className="w-4 h-4" />
-          )}
-          {loading ? "Analyzing…" : "Generate"}
-        </button>
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground font-medium">Account size <span className="text-muted-foreground/60">(optional — enables 2% rule)</span></label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-mono text-sm">$</span>
+            <input
+              type="number" min="1" placeholder="e.g. 25000"
+              value={accountSize} onChange={(e) => setAccountSize(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && generate()}
+              className="w-full bg-background border border-border rounded-lg pl-7 pr-4 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/60 transition-all"
+            />
+          </div>
+        </div>
       </div>
+
+      <button
+        onClick={generate}
+        disabled={loading || !amount}
+        className="w-full px-5 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+      >
+        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+        {loading ? "Analyzing…" : "Generate Strategy"}
+      </button>
 
       {error && (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm">
@@ -828,117 +843,128 @@ function OptionsStrategyPanel({ symbol }: { symbol: string }) {
 
       {strategy && (
         <div className="space-y-5 pt-2 border-t border-border/50">
+
           {/* Strategy Header */}
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h4 className="text-xl font-display font-bold">
-                {strategy.strategyName}
-              </h4>
+              <h4 className="text-xl font-display font-bold">{strategy.strategyName}</h4>
               <div className="flex items-center gap-2 mt-1.5">
-                <span
-                  className={cn(
-                    "text-xs font-semibold px-2 py-0.5 rounded-md border",
-                    DIRECTION_CONFIG[
-                      strategy.strategyType as keyof typeof DIRECTION_CONFIG
-                    ]?.bg,
-                    DIRECTION_CONFIG[
-                      strategy.strategyType as keyof typeof DIRECTION_CONFIG
-                    ]?.color,
-                  )}
-                >
+                <span className={cn("text-xs font-semibold px-2 py-0.5 rounded-md border",
+                  DIRECTION_CONFIG[strategy.strategyType as keyof typeof DIRECTION_CONFIG]?.bg,
+                  DIRECTION_CONFIG[strategy.strategyType as keyof typeof DIRECTION_CONFIG]?.color)}>
                   {strategy.strategyType?.toUpperCase()}
                 </span>
-                <span
-                  className={cn(
-                    "text-xs font-semibold px-2 py-0.5 rounded-md border",
-                    RISK_CONFIG[strategy.riskLevel as keyof typeof RISK_CONFIG]
-                      ?.bg,
-                    RISK_CONFIG[strategy.riskLevel as keyof typeof RISK_CONFIG]
-                      ?.color,
-                  )}
-                >
+                <span className={cn("text-xs font-semibold px-2 py-0.5 rounded-md border",
+                  RISK_CONFIG[strategy.riskLevel as keyof typeof RISK_CONFIG]?.bg,
+                  RISK_CONFIG[strategy.riskLevel as keyof typeof RISK_CONFIG]?.color)}>
                   {strategy.riskLevel?.toUpperCase()} RISK
                 </span>
               </div>
             </div>
             <div className="text-right">
-              <div className="text-xs text-muted-foreground mb-1">
-                Profit Probability
-              </div>
-              <div className="font-mono text-2xl font-bold text-[#00C853]">
-                {strategy.probability}%
-              </div>
+              <div className="text-xs text-muted-foreground mb-1">Profit Probability</div>
+              <div className="font-mono text-2xl font-bold text-[#00C853]">{strategy.probability}%</div>
             </div>
           </div>
 
           <DataQualityBanner dataQuality={strategy.dataQuality} />
 
-          {/* P&L Summary */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatPill
-              label="Total Cost"
-              value={
-                strategy.totalCost
-                  ? `${strategy.totalCost.toLocaleString()}`
-                  : "N/A"
-              }
-            />
-            <StatPill
-              label="Max Profit"
-              value={strategy.maxProfit}
-              highlight="up"
-            />
-            <StatPill
-              label="Max Loss"
-              value={strategy.maxLoss}
-              highlight="down"
-            />
-            <StatPill label="Breakeven" value={strategy.breakeven} />
+          {/* Theoretical P&L */}
+          <div>
+            <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+              Theoretical P&amp;L <span className="normal-case font-normal">(mid-price fills)</span>
+            </h5>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <StatPill label="Total Cost" value={strategy.totalCost != null ? `${strategy.totalCost.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "N/A"} />
+              <StatPill label="Max Profit" value={strategy.maxProfit} highlight="up" />
+              <StatPill label="Max Loss"   value={strategy.maxLoss}   highlight="down" />
+              <StatPill label="Breakeven"  value={strategy.breakeven} />
+            </div>
           </div>
 
-          {/* Legs */}
+          {/* Realistic P&L after costs */}
+          {strategy.friction != null && (
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                <h5 className="text-xs font-semibold uppercase tracking-wider text-amber-500">
+                  Realistic P&amp;L after costs
+                </h5>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <StatPill label="Effective Cost"       value={`${strategy.effectiveCost?.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} />
+                <StatPill label="After-Cost Max Profit" value={strategy.effectiveMaxProfit} highlight="up" />
+                <StatPill label="After-Cost Max Loss"   value={strategy.effectiveMaxLoss}   highlight="down" />
+              </div>
+              <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                <span>
+                  Commission: <span className="font-mono text-foreground">${strategy.commission?.toFixed(2)}</span>
+                  <span className="text-muted-foreground/60 ml-1">($0.65/contract, one-way open)</span>
+                </span>
+                <span>
+                  Slippage: <span className="font-mono text-foreground">${strategy.slippage?.toFixed(2)}</span>
+                  <span className="text-muted-foreground/60 ml-1">(½ bid-ask spread)</span>
+                </span>
+                <span className="font-medium text-amber-500/80">
+                  Total drag: <span className="font-mono">${strategy.friction?.toFixed(2)}</span>
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Position sizing — 2% rule */}
+          {ps && (
+            <div className={cn(
+              "rounded-xl border p-4 space-y-2",
+              ps.exceedsRule
+                ? "border-destructive/30 bg-destructive/5"
+                : "border-[#00C853]/20 bg-[#00C853]/5"
+            )}>
+              <div className="flex items-center justify-between">
+                <h5 className={cn("text-xs font-semibold uppercase tracking-wider",
+                  ps.exceedsRule ? "text-destructive" : "text-[#00C853]")}>
+                  Position Risk
+                </h5>
+                <span className={cn("font-mono font-bold text-sm",
+                  ps.exceedsRule ? "text-destructive" : "text-[#00C853]")}>
+                  {ps.riskPercent}% of account
+                </span>
+              </div>
+              <div className="w-full h-2 rounded-full bg-border/50 overflow-hidden">
+                <div
+                  className={cn("h-full rounded-full transition-all",
+                    ps.exceedsRule ? "bg-destructive" : "bg-[#00C853]")}
+                  style={{ width: `${Math.min(ps.riskPercent / 5 * 100, 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">{ps.recommendation}</p>
+              <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                <span>Account: <span className="font-mono text-foreground">${ps.accountSize.toLocaleString()}</span></span>
+                <span>At risk: <span className="font-mono text-foreground">${ps.riskDollars.toLocaleString()}</span></span>
+                <span>2% limit: <span className="font-mono text-foreground">${ps.maxAllowedFor2Pct.toLocaleString()}</span></span>
+              </div>
+            </div>
+          )}
+
+          {/* Strategy Legs */}
           {strategy.legs?.length > 0 && (
             <div>
-              <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Strategy Legs
-              </h5>
+              <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Strategy Legs</h5>
               <div className="space-y-2">
                 {strategy.legs.map((leg: any, i: number) => (
-                  <div
-                    key={i}
-                    className="flex flex-col gap-1 bg-background border border-border rounded-lg px-4 py-2.5"
-                  >
+                  <div key={i} className="flex flex-col gap-1 bg-background border border-border rounded-lg px-4 py-2.5">
                     <div className="flex items-center gap-3">
-                      <span
-                        className={cn(
-                          "text-xs font-bold px-2 py-0.5 rounded",
-                          leg.action === "buy"
-                            ? "bg-[#00C853]/10 text-[#00C853]"
-                            : "bg-[#FF333A]/10 text-[#FF333A]",
-                        )}
-                      >
+                      <span className={cn("text-xs font-bold px-2 py-0.5 rounded",
+                        leg.action === "buy" ? "bg-[#00C853]/10 text-[#00C853]" : "bg-[#FF333A]/10 text-[#FF333A]")}>
                         {leg.action?.toUpperCase()}
                       </span>
                       <span className="font-mono text-sm font-semibold">
-                        {leg.contracts}x {leg.type?.toUpperCase()}
-                        {leg.strike ? ` ${leg.strike}` : ""}
+                        {leg.contracts}x {leg.type?.toUpperCase()}{leg.strike ? ` ${leg.strike}` : ""}
                       </span>
-                      {leg.expiry && (
-                        <span className="text-xs text-muted-foreground ml-auto">
-                          exp {leg.expiry}
-                        </span>
-                      )}
-                      {leg.premium != null && (
-                        <span className="font-mono text-sm text-muted-foreground">
-                          @${leg.premium.toFixed(2)}
-                        </span>
-                      )}
+                      {leg.expiry && <span className="text-xs text-muted-foreground ml-auto">exp {leg.expiry}</span>}
+                      {leg.premium != null && <span className="font-mono text-sm text-muted-foreground">@${leg.premium.toFixed(2)}</span>}
                     </div>
-                    <GreeksRow
-                      iv={leg.impliedVolatility}
-                      delta={leg.delta}
-                      theo={leg.theoreticalPrice}
-                    />
+                    <GreeksRow iv={leg.impliedVolatility} delta={leg.delta} theo={leg.theoreticalPrice} />
                   </div>
                 ))}
               </div>
@@ -950,9 +976,7 @@ function OptionsStrategyPanel({ symbol }: { symbol: string }) {
             <div className="flex items-start gap-2 text-xs text-muted-foreground bg-background border border-border rounded-lg px-4 py-2.5">
               <Calculator className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
               <span>
-                <b className="text-foreground">
-                  {strategy.probability}% probability of profit
-                </b>{" "}
+                <b className="text-foreground">{strategy.probability}% probability of profit</b>{" "}
                 — computed via {strategy.probabilityMethod}, not an AI estimate.
               </span>
             </div>
@@ -961,32 +985,21 @@ function OptionsStrategyPanel({ symbol }: { symbol: string }) {
           {/* Reasoning */}
           <div className="space-y-3">
             <div className="bg-background border border-border rounded-lg p-4">
-              <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                AI Reasoning
-              </h5>
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                {strategy.reasoning}
-              </p>
+              <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">AI Reasoning</h5>
+              <p className="text-sm leading-relaxed text-muted-foreground">{strategy.reasoning}</p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="bg-background border border-border rounded-lg p-4">
-                <h5 className="text-xs font-semibold uppercase tracking-wider text-[#00C853] mb-2">
-                  Entry Timing
-                </h5>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {strategy.entryTiming}
-                </p>
+                <h5 className="text-xs font-semibold uppercase tracking-wider text-[#00C853] mb-2">Entry Timing</h5>
+                <p className="text-sm leading-relaxed text-muted-foreground">{strategy.entryTiming}</p>
               </div>
               <div className="bg-background border border-border rounded-lg p-4">
-                <h5 className="text-xs font-semibold uppercase tracking-wider text-[#FF333A] mb-2">
-                  Exit Strategy
-                </h5>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {strategy.exitStrategy}
-                </p>
+                <h5 className="text-xs font-semibold uppercase tracking-wider text-[#FF333A] mb-2">Exit Strategy</h5>
+                <p className="text-sm leading-relaxed text-muted-foreground">{strategy.exitStrategy}</p>
               </div>
             </div>
           </div>
+
         </div>
       )}
     </div>

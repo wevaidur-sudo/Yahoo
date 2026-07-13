@@ -539,7 +539,9 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
     const enhancedTradeSetup  = generateTradeSetup({ spot, levels: intradayLevels, signalScore: enhancedSignalScore, now });
 
     // Record prediction for ML training — fire-and-forget, never blocks response
-    recordPrediction(mlFeaturesObj).catch(() => {});
+    recordPrediction(mlFeaturesObj).catch((e) =>
+      req.log.warn({ err: String(e) }, "ML: recordPrediction failed"),
+    );
 
     // Assemble predictiveIntelligence for the response
     const predictiveIntelligence = {

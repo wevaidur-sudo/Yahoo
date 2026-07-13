@@ -51,30 +51,33 @@ function buildSentimentPrompt(params: {
     ? `Next earnings: ${new Date(quote.earningsTimestamp * 1000).toDateString()}`
     : "No upcoming earnings date available";
 
-  return `You are a quantitative news analyst scoring stock news for its INTRADAY directional impact TODAY ONLY.
+  return `You are a quantitative news analyst scoring stock news for its INTRADAY directional impact for today's trading session.
 
-Symbol: ${symbol} | Current Price: $${spot.toFixed(2)}
-Change: ${(quote.regularMarketChangePercent ?? 0).toFixed(2)}%
+Symbol: ${symbol} | Current Price: ${spot.toFixed(2)}
+Change today: ${(quote.regularMarketChangePercent ?? 0).toFixed(2)}%
 ${earningsNote}
 
-Recent News:
+News Headlines (ignore publication timestamps — assess content relevance only):
 ${newsStr}
 
 Score the INTRADAY directional impact of this news on a scale from -100 to +100:
 - +100: Extremely bullish catalyst (earnings beat, major upgrade, M&A takeover premium)
-- +50:  Moderately bullish (positive guidance, analyst upgrade, positive macro data)
-- 0:    Neutral or mixed news / no meaningful catalyst
-- -50:  Moderately bearish (earnings miss, downgrade, margin pressure)
+- +50:  Moderately bullish (positive guidance, analyst upgrade, product launch)
+- 0:    Neutral, mixed, or purely informational news with no clear directional edge
+- -50:  Moderately bearish (earnings miss, downgrade, margin pressure, regulatory risk)
 - -100: Extremely bearish catalyst (massive earnings miss, accounting fraud, regulatory block)
 
-Consider ONLY news from the last 24 hours. Old news (>1 day) should NOT influence the score.
-If the news is clearly pre-priced (stock already moved significantly), reduce score magnitude by 50%.
+Rules:
+1. If the stock has already moved significantly today (>3%), assume 50% of the news is pre-priced.
+2. Score 0 if the headlines are entirely generic, background, or have no clear directional catalyst.
+3. Earnings events within 5 days count as a strong catalyst regardless of other news.
+4. Rate the OVERALL net directional sentiment across all headlines — not just the most dramatic one.
 
 Return ONLY valid JSON:
 {
   "sentimentScore": <integer from -100 to +100>,
   "isEarningsDriven": <true | false>,
-  "catalystSummary": "<one sentence: what is the key catalyst and its direction>",
+  "catalystSummary": "<one sentence: what is the key catalyst and its expected direction>",
   "confidence": <integer 0-100: how confident are you in this assessment>
 }`;
 }
@@ -130,14 +133,14 @@ export async function scoreNewsSentiment(params: {
       : 0;
 
     // Normalize raw score (-100 to +100) → signal score (-15 to +15)
-    // Only apply weight when score is meaningful (|raw| >= 20)
+    // Threshold: |raw| >= 10 (noise floor — avoids reacting to vague/background articles)
     let score = 0;
-    if (Math.abs(rawScore) >= 20) {
+    if (Math.abs(rawScore) >= 10) {
       score = Math.round((rawScore / 100) * 15);
     }
 
     const direction: NewsSentimentResult["direction"] =
-      score > 3 ? "bullish" : score < -3 ? "bearish" : "neutral";
+      score > 1 ? "bullish" : score < -1 ? "bearish" : "neutral";
 
     const isEarningsDriven = !!parsed.isEarningsDriven;
     const catalystSummary  = typeof parsed.catalystSummary === "string"

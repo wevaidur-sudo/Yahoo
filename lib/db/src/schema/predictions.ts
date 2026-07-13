@@ -45,6 +45,10 @@ export const predictionSignalsTable = pgTable(
     hourOfDay: real("hour_of_day"),
     /** Setup type from trade setup generator */
     setupType: text("setup_type"),
+    /** Stock price at the moment the prediction was made (for outcome resolution) */
+    spotPrice: real("spot_price"),
+    /** Enhanced direction: 1 = bullish, -1 = bearish, 0 = no-trade (after predictive signals) */
+    enhancedDirection: integer("enhanced_direction"),
     /** When this prediction was recorded */
     recordedAt: timestamp("recorded_at", { withTimezone: true }).defaultNow().notNull(),
   },

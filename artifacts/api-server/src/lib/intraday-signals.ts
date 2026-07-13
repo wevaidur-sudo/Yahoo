@@ -4,7 +4,7 @@
  * Produces a deterministic conviction score (0–100) + directional bias from
  * intraday levels and multi-timeframe RSI / MACD. No AI, no randomness.
  *
- * Signal weights:
+ * Signal weights (intraday layer — reactive):
  *   VWAP Position         25 — primary institutional bias indicator
  *   ORB Status            20 — highest-probability intraday pattern
  *   MTF RSI (5m+15m)      20 — momentum confirmed across timeframes
@@ -13,7 +13,16 @@
  *   Previous Day H/L      10 — PDH/PDL are strong magnetic levels
  *   15m MACD Histogram     5 — momentum confirmation tiebreaker
  *   ─────────────────────────
- *   MAX_SIGNAL_WEIGHT    105  (conviction = |net| / 105 × 100 — fixed denominator)
+ *   MAX_INTRADAY_WEIGHT  105  (conviction = |net| / 105 × 100 — fixed denominator)
+ *
+ * Predictive layer (leading indicators — applied via applyPredictiveSignals):
+ *   Pre-Market Momentum   30 — PM price trajectory + block trades BEFORE open
+ *   Options Flow          15 — unusual volume/OI + IV skew (smart money positioning)
+ *   News Catalyst         15 — Gemini-scored news sentiment BEFORE price confirms
+ *   Market Regime         10 — SPY/VIX macro context modifier
+ *   ML Model Edge         15 — logistic regression on historical signal → outcomes
+ *   ─────────────────────────
+ *   MAX_PREDICTIVE_WEIGHT 85  (additive to intraday; new MAX = 190)
  *
  * Conviction uses a FIXED denominator (105) so scores are stable and comparable
  * regardless of how many signals happen to fire. Using a dynamic denominator
@@ -753,4 +762,120 @@ export function generateTradeSetup(params: {
     noTradeReason: null,
     confidence: signalScore.conviction,
   };
+}
+
+// ─── Predictive signal extension ──────────────────────────────────────────────
+
+/**
+ * A single leading indicator signal to inject into the scoring engine.
+ * Score is signed (positive = bullish, negative = bearish).
+ * maxWeight is the maximum possible |score| for this signal type — used as
+ * the denominator contribution so conviction stays normalized 0–100.
+ */
+export interface PredictiveSignalInput {
+  name: string;
+  direction: "bullish" | "bearish" | "neutral";
+  score: number;      // signed contribution; positive = bullish
+  maxWeight: number;  // max possible |score| for this signal (denominator)
+  value: string;
+  note: string;
+}
+
+/**
+ * Merge leading/predictive signals into an existing IntradaySignalScore.
+ *
+ * Design rules:
+ * 1. Structural no-trade overrides (thin volume, RVOL guard) are preserved —
+ *    predictive signals cannot override a fundamental trading barrier.
+ * 2. Conviction-only no-trade (score < 35) CAN be lifted by strong
+ *    predictive signals — that's the whole point of the predictive layer.
+ * 3. The new fixed denominator = INTRADAY_MAX (105) + sum(maxWeights),
+ *    so conviction stays bounded 0–100 and remains comparable.
+ */
+export function applyPredictiveSignals(
+  base: IntradaySignalScore,
+  predictive: PredictiveSignalInput[],
+): IntradaySignalScore {
+  if (!predictive.length) return base;
+
+  const INTRADAY_MAX = 105;
+  const predictiveMax = predictive.reduce((s, p) => s + p.maxWeight, 0);
+  const NEW_MAX = INTRADAY_MAX + predictiveMax;
+
+  // Reconstruct the base net weight from conviction + direction
+  const baseNet =
+    base.direction === "bullish"  ?  (base.conviction / 100) * INTRADAY_MAX :
+    base.direction === "bearish"  ? -(base.conviction / 100) * INTRADAY_MAX :
+    0;
+
+  const predictiveNet = predictive.reduce((s, p) => s + p.score, 0);
+  const totalNet = baseNet + predictiveNet;
+
+  const conviction = Math.min(100, Math.max(0, Math.round((Math.abs(totalNet) / NEW_MAX) * 100)));
+  const rawDirection: IntradaySignalScore["direction"] =
+    totalNet > 0 ? "bullish" : totalNet < 0 ? "bearish" : "no-trade";
+
+  // Build extended signals array (predictive signals listed after intraday ones)
+  const extendedSignals: IntradaySignal[] = [
+    ...base.signals,
+    ...predictive.map((p) => ({
+      name: p.name,
+      signal: p.direction as IntradaySignal["signal"],
+      weight: Math.abs(p.score),
+      value: p.value,
+      note: p.note,
+    })),
+  ];
+
+  let bullishCount = base.bullishCount;
+  let bearishCount = base.bearishCount;
+  let neutralCount = base.neutralCount;
+  for (const p of predictive) {
+    if (p.direction === "bullish")      bullishCount++;
+    else if (p.direction === "bearish") bearishCount++;
+    else                                neutralCount++;
+  }
+
+  // ── Preserve structural no-trade overrides ────────────────────────────────
+  // RVOL guard, missing ATR, etc. are immovable — predictive layer cannot fix them.
+  const STRUCTURAL_NO_TRADE_KEYWORDS = ["RVOL", "volume too thin", "ATR", "Opening range still forming"];
+  const isStructural = base.noTradeReason
+    ? STRUCTURAL_NO_TRADE_KEYWORDS.some((kw) => base.noTradeReason!.includes(kw))
+    : false;
+
+  if (isStructural) {
+    // Keep the no-trade direction, but refresh signals + conviction
+    return {
+      direction: "no-trade",
+      conviction,
+      bullishCount, bearishCount, neutralCount,
+      noTradeReason: base.noTradeReason,
+      signals: extendedSignals,
+    };
+  }
+
+  // ── Re-evaluate conviction threshold with combined score ──────────────────
+  let direction = rawDirection;
+  let noTradeReason: string | null = null;
+
+  if (direction !== "no-trade") {
+    const alignedCount = direction === "bullish" ? bullishCount : bearishCount;
+    if (alignedCount < 2) {
+      noTradeReason = "Only one confirming signal — need at least 2 aligned indicators";
+      direction = "no-trade";
+    }
+  }
+
+  if (direction !== "no-trade" && conviction < 35) {
+    noTradeReason = "Combined conviction (intraday + predictive) below 35% threshold";
+    direction = "no-trade";
+  }
+
+  // Long-side floor: still require ≥ 50 conviction for longs
+  if (direction === "bullish" && conviction < 50) {
+    noTradeReason = `Long combined conviction ${conviction}% below 50% floor`;
+    direction = "no-trade";
+  }
+
+  return { direction, conviction, bullishCount, bearishCount, neutralCount, noTradeReason, signals: extendedSignals };
 }

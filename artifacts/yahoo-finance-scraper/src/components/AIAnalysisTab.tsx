@@ -3,6 +3,7 @@ import {
   useGetStockAnalysis,
   getGetStockAnalysisQueryKey,
 } from "@workspace/api-client-react";
+import { PredictiveIntelligenceCard, type PredictiveIntelligence } from "./PredictiveIntelligenceCard";
 import { cn } from "@/lib/utils";
 import {
   TrendingUp,
@@ -1164,6 +1165,13 @@ export default function AIAnalysisTab({ symbol }: Props) {
 
       {/* ── Trade Setup (THE premium output) ─────────────────────── */}
       <TradeSetupCard setup={setup} />
+
+      {/* ── Predictive Intelligence (leading indicators) ─────────── */}
+      {analysis.predictiveIntelligence && (
+        <PredictiveIntelligenceCard
+          data={analysis.predictiveIntelligence as PredictiveIntelligence}
+        />
+      )}
 
       {/* ── Technical Signal Score (formula-based) ───────────────── */}
       <div

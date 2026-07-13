@@ -15,13 +15,21 @@ import {
   computeIntradayLevels,
   getMarketHours,
   getMarketState,
+  getETOffset,
   type IntradayLevels,
 } from "../lib/intraday";
 import {
   computeIntradaySignals,
   generateTradeSetup,
+  applyPredictiveSignals,
   type IntradaySignalScore,
+  type PredictiveSignalInput,
 } from "../lib/intraday-signals";
+import { computePreMarketIntelligence } from "../lib/pre-market-intelligence";
+import { analyzeOptionsFlow }           from "../lib/options-flow";
+import { getMarketRegime }              from "../lib/market-regime";
+import { scoreNewsSentiment }           from "../lib/news-sentiment";
+import { mlPredict, recordPrediction, type MLFeatures } from "../lib/ml-predictor";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const yahooFinance = new (YahooFinance as any)({ suppressNotices: ["yahooSurvey"] });
@@ -372,6 +380,10 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
     // ── Trade setup generator ─────────────────────────────────────────────────
     const tradeSetup = generateTradeSetup({ spot, levels: intradayLevels, signalScore, now });
 
+    // Hoist marketHours early — needed both for pre-market bar filtering below
+    // and for the Gemini prompt / response later.
+    const marketHours = getMarketHours(now);
+
     // ── News ──────────────────────────────────────────────────────────────────
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const newsItems: any[] = newsResult.status === "fulfilled"
@@ -418,16 +430,173 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
       };
     }
 
+    // ── Predictive intelligence (5 leading indicators — fire BEFORE price confirms) ────
+    const etHour        = ((now.getUTCHours() - getETOffset(now) + 24) % 24) + now.getUTCMinutes() / 60;
+    const preMarketBars = minuteBars.filter(
+      (b) => b.timestamp >= marketHours.preMarketStart && b.timestamp < marketHours.marketOpen,
+    );
+
+    const geminiApiKey = process.env["GEMINI_API_KEY"] ?? "";
+
+    const [pmResult, optFlowResult, regimeResult, newsSentimentResult] = await Promise.allSettled([
+      Promise.resolve(computePreMarketIntelligence({
+        preMarketBars, pdClose: intradayLevels.pdClose, avgDailyVolume,
+        earningsTs: q.earningsTimestamp != null ? (q.earningsTimestamp as number) * 1000 : null,
+        now,
+      })),
+      Promise.resolve(analyzeOptionsFlow({ rawCalls, rawPuts, spot })),
+      getMarketRegime(yahooFinance as Parameters<typeof getMarketRegime>[0]),
+      scoreNewsSentiment({ symbol, spot, newsItems, quote: q, geminiApiKey }),
+    ]);
+
+    const pmIntel      = pmResult.status           === "fulfilled" ? pmResult.value          : null;
+    const optFlowIntel = optFlowResult.status      === "fulfilled" ? optFlowResult.value      : null;
+    const regimeIntel  = regimeResult.status       === "fulfilled" ? regimeResult.value       : null;
+    const newsIntel    = newsSentimentResult.status === "fulfilled" ? newsSentimentResult.value : null;
+
+    // Build predictive signal inputs for the scoring engine
+    const predictiveInputs: PredictiveSignalInput[] = [];
+
+    if (pmIntel) {
+      const pmScore = pmIntel.momentumScore + pmIntel.blockTradeScore;
+      predictiveInputs.push({
+        name: "Pre-Market Momentum",
+        direction: pmIntel.direction,
+        score: pmScore,
+        maxWeight: 30,
+        value: `${pmIntel.velocityPctPerHour >= 0 ? "+" : ""}${pmIntel.velocityPctPerHour.toFixed(2)}%/hr${pmIntel.blockTradeDetected ? " ⚡ Block trade" : ""}`,
+        note: pmIntel.note,
+      });
+    }
+    if (optFlowIntel) {
+      predictiveInputs.push({
+        name: "Options Flow",
+        direction: optFlowIntel.direction,
+        score: optFlowIntel.score,
+        maxWeight: 15,
+        value: optFlowIntel.fullChainPCR != null
+          ? `PCR ${optFlowIntel.fullChainPCR}${Math.abs(optFlowIntel.ivSkewPct) > 0.5 ? ` | IV skew ${optFlowIntel.ivSkewPct > 0 ? "+" : ""}${optFlowIntel.ivSkewPct.toFixed(1)}%` : ""}`
+          : "No options data",
+        note: optFlowIntel.note,
+      });
+    }
+    if (newsIntel) {
+      predictiveInputs.push({
+        name: "News Catalyst",
+        direction: newsIntel.direction,
+        score: newsIntel.score,
+        maxWeight: 15,
+        value: `Sentiment ${newsIntel.rawScore >= 0 ? "+" : ""}${newsIntel.rawScore}/100${newsIntel.isEarningsDriven ? " | Earnings" : ""}`,
+        note: newsIntel.note,
+      });
+    }
+    if (regimeIntel) {
+      predictiveInputs.push({
+        name: "Market Regime",
+        direction: regimeIntel.direction,
+        score: regimeIntel.score,
+        maxWeight: 10,
+        value: [
+          regimeIntel.vixLevel != null ? `VIX ${regimeIntel.vixLevel} (${regimeIntel.vixRegime ?? "?"})` : null,
+          regimeIntel.spyAbove20SMA === true  ? "SPY ▲ above 20-SMA" :
+          regimeIntel.spyAbove20SMA === false ? "SPY ▼ below 20-SMA" : null,
+        ].filter(Boolean).join(" | "),
+        note: regimeIntel.note,
+      });
+    }
+
+    // ML prediction (reads/trains from DB)
+    const mlFeaturesObj: MLFeatures = {
+      symbol,
+      sessionDate: now.toISOString().split("T")[0]!,
+      intradayConviction: signalScore.conviction,
+      intradayDirection:  signalScore.direction === "bullish" ? 1 : signalScore.direction === "bearish" ? -1 : 0,
+      gapPct:            intradayLevels.gap  ?? 0,
+      rvol:              intradayLevels.rvol ?? 1,
+      preMarketScore:    pmIntel ? pmIntel.momentumScore + pmIntel.blockTradeScore : 0,
+      optionsFlowScore:  optFlowIntel?.score ?? 0,
+      newsSentimentScore: newsIntel?.score ?? 0,
+      regimeScore:       regimeIntel?.score ?? 0,
+      hourOfDay:         etHour,
+      setupType:         tradeSetup.setupType ?? "no-trade",
+    };
+
+    const mlResult = await mlPredict(mlFeaturesObj).catch(() => null);
+
+    if (mlResult?.hasSufficientData) {
+      predictiveInputs.push({
+        name: "ML Model Edge",
+        direction: mlResult.direction,
+        score: mlResult.score,
+        maxWeight: 15,
+        value: `${(mlResult.probability * 100).toFixed(0)}% correct probability (${mlResult.trainingSampleCount} samples)`,
+        note: mlResult.note,
+      });
+    }
+
+    // Apply predictive signals to base score to get the enhanced combined score
+    const enhancedSignalScore = applyPredictiveSignals(signalScore, predictiveInputs);
+    const enhancedTradeSetup  = generateTradeSetup({ spot, levels: intradayLevels, signalScore: enhancedSignalScore, now });
+
+    // Record prediction for ML training — fire-and-forget, never blocks response
+    recordPrediction(mlFeaturesObj).catch(() => {});
+
+    // Assemble predictiveIntelligence for the response
+    const predictiveIntelligence = {
+      preMarketMomentum: pmIntel ? {
+        direction: pmIntel.direction,
+        score: pmIntel.momentumScore + pmIntel.blockTradeScore,
+        velocityPctPerHour: pmIntel.velocityPctPerHour,
+        volumeSurge: pmIntel.volumeSurge,
+        blockTradeDetected: pmIntel.blockTradeDetected,
+        earningsInDays: pmIntel.earningsInDays,
+        note: pmIntel.note,
+      } : null,
+      optionsFlow: optFlowIntel ? {
+        direction: optFlowIntel.direction,
+        score: optFlowIntel.score,
+        unusualCallStrikes: optFlowIntel.unusualCallStrikes,
+        unusualPutStrikes: optFlowIntel.unusualPutStrikes,
+        ivSkewPct: optFlowIntel.ivSkewPct,
+        fullChainPCR: optFlowIntel.fullChainPCR,
+        note: optFlowIntel.note,
+      } : null,
+      newsCatalyst: newsIntel ? {
+        direction: newsIntel.direction,
+        score: newsIntel.score,
+        rawScore: newsIntel.rawScore,
+        isEarningsDriven: newsIntel.isEarningsDriven,
+        catalystSummary: newsIntel.catalystSummary,
+        note: newsIntel.note,
+      } : null,
+      marketRegime: regimeIntel ? {
+        direction: regimeIntel.direction,
+        score: regimeIntel.score,
+        spyAbove20SMA: regimeIntel.spyAbove20SMA,
+        vixLevel: regimeIntel.vixLevel,
+        vixRegime: regimeIntel.vixRegime,
+        note: regimeIntel.note,
+      } : null,
+      mlPrediction: mlResult ? {
+        direction: mlResult.direction,
+        probability: mlResult.probability,
+        score: mlResult.score,
+        hasSufficientData: mlResult.hasSufficientData,
+        trainingSampleCount: mlResult.trainingSampleCount,
+        note: mlResult.note,
+      } : null,
+    };
+
     // ── Market session context ────────────────────────────────────────────────
-    const marketHours    = getMarketHours(now);
     const marketState    = getMarketState(now, marketHours);
     const sessionMinutes = now >= marketHours.marketOpen
       ? Math.round((now.getTime() - marketHours.marketOpen.getTime()) / 60000)
       : 0;
 
     // ── Gemini qualitative overlay ────────────────────────────────────────────
+    // Use enhancedSignalScore so Gemini sees the full combined conviction
     const prompt = buildIntradayPrompt({
-      symbol, spot, q, signalScore, levels: intradayLevels,
+      symbol, spot, q, signalScore: enhancedSignalScore, levels: intradayLevels,
       newsItems, marketState, sessionMinutes, optChain,
     });
 
@@ -516,8 +685,9 @@ router.get("/finance/analysis/:symbol", async (req, res): Promise<void> => {
       symbol,
       generatedAt: new Date().toISOString(),
       intradayLevels,
-      signalScore,
-      tradeSetup,
+      signalScore: enhancedSignalScore,
+      tradeSetup:  enhancedTradeSetup,
+      predictiveIntelligence,
       trend:           aiOutput.trend,
       intraday:        aiOutput.intraday,
       optionsSnapshot,
@@ -575,10 +745,11 @@ router.post("/finance/options-strategy/:symbol", async (req, res): Promise<void>
     // is rate-limiting or the symbol is halted — stale prices make every Greeks
     // calculation unreliable. Block immediately; outside regular hours (pre/post
     // market, weekends) stale quotes are expected and we proceed with a warning.
-    const _quoteTsMs  = q.regularMarketTime ? new Date(q.regularMarketTime).getTime() : null;
+    const _quoteTsMs   = q.regularMarketTime ? new Date(q.regularMarketTime).getTime() : null;
     const _quoteAgeSec = _quoteTsMs ? Math.round((now.getTime() - _quoteTsMs) / 1000) : null;
-    const _mktState   = getMarketState(now);
-    if (_mktState.isRegularHours && _quoteAgeSec !== null && _quoteAgeSec > 900) {
+    const _mktHours    = getMarketHours(now);
+    const _mktState    = getMarketState(now, _mktHours);
+    if (_mktState === "open" && _quoteAgeSec !== null && _quoteAgeSec > 900) {
       res.status(422).json({
         error: `Quote data for ${symbol} is ${Math.round(_quoteAgeSec / 60)} min old. ` +
           `Options pricing requires current prices during market hours. ` +

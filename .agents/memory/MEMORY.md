@@ -1,4 +1,5 @@
 - [AI Analysis Architecture](ai-analysis-architecture.md) — signal score is formula-based (deterministic), Gemini provides qualitative overlay only; score normalization uses fixed category weights in denominator even for neutral signals.
+- [Predictive Intelligence Architecture](predictive-intelligence-architecture.md) — 5-module leading-indicator system wired above intraday signals via applyPredictiveSignals(); gemini-2.0-flash-lite does not work, use gemini-3.1-flash-lite.
 - [Intraday backtest methodology](intraday-backtest-methodology.md) — walk-forward train/test split, require entry-zone fill, gate must never leak into its own training measurement, cap unresolved R at target2.
 - [Long-running jobs in this sandbox](long-jobs-in-sandbox.md) — background/detached processes get killed when a bash tool call returns; checkpoint long jobs (training, bulk fetch) into DB-persisted chunks instead.
 - [TS project references stale dist](ts-project-refs-stale-dist.md) — adding exports to a composite lib package can fail typecheck with a false "no exported member" until dependents are rebuilt via `tsc -b --force`.
